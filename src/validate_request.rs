@@ -18,7 +18,7 @@ pub struct HttpRequest {
 // Returns `Some(PathBuf)` if valid, otherwise `None`.
 // #############################################################################################
 pub fn validate_and_resolve(req: HttpRequest, docroot: &Path) -> Option<PathBuf> {
-    // Only allow GET requests
+    // Only allow GET requests for now
     if req.method != "GET" {
         return None;
     }
@@ -28,10 +28,13 @@ pub fn validate_and_resolve(req: HttpRequest, docroot: &Path) -> Option<PathBuf>
         return None;
     }
 
-    // Normalize slashes and lowercase the URL
-    let mut url = req.url.replace('\\', "/").to_ascii_lowercase();
+    // Normalize URL first
+    let url = req.url.replace('\\', "/").to_ascii_lowercase();
 
-    // Collapse repeated slashes like // into /
+    // Split off query + fragment into an owned string
+    let mut url = url.split(['?', '#']).next().unwrap_or("").to_string();
+
+    // Collapse repeated slashes like into /
     while url.contains("//") {
         url = url.replace("//", "/");
     }
@@ -41,7 +44,7 @@ pub fn validate_and_resolve(req: HttpRequest, docroot: &Path) -> Option<PathBuf>
         return None;
     }
 
-    // allowed character check
+    // Allowed character check
     if !url.bytes().all(|b| {
         matches!(
             b,
@@ -63,18 +66,42 @@ pub fn validate_and_resolve(req: HttpRequest, docroot: &Path) -> Option<PathBuf>
         return None;
     }
 
-    // Convert document root into a mutable path buffer
-    let mut root = docroot.to_path_buf();
+    // Decide whether this is a directory request
+    let mut is_dir_request = url.ends_with('/');
+
+    // Check "/subdirectory" → if it exists as directory, treat it as a directory
+    if !is_dir_request {
+        // Start from the document root and build a candidate filesystem path
+        let mut candidate = docroot.to_path_buf();
+
+        // Append the requested URL path (without leading '/')
+        candidate.push(url.trim_start_matches('/'));
+
+        // If this path exists and is a directory, treat it as a directory request
+        // so we can later serve its default index.html file
+        if candidate.is_dir() {
+            is_dir_request = true;
+        }
+    }
+
+    // Build final URL path string
+    let mut final_url = url.clone();
 
     // If URL ends with '/', serve index.html automatically
     // Example: http://example.corm/ -> http://example.corm/index.html
     // Example: http://example.corm/folder/ -> http://example.corm/folder/index.html
-    if url.ends_with('/') {
-        url.push_str("index.html");
+    if is_dir_request {
+        if !final_url.ends_with('/') {
+            final_url.push('/');
+        }
+        final_url.push_str("index.html");
     }
 
-    // Remove leading slash and convert into a Path
-    let path = Path::new(url.trim_start_matches('/'));
+    // Convert into Path
+    let path = Path::new(final_url.trim_start_matches('/'));
+
+    // Convert document root into a mutable path buffer
+    let mut root = docroot.to_path_buf();
 
     // Walk through path components safely
     for component in path.components() {
@@ -83,7 +110,7 @@ pub fn validate_and_resolve(req: HttpRequest, docroot: &Path) -> Option<PathBuf>
                 // Convert component to string for validation
                 let s = name.to_string_lossy();
 
-                // Block hidden files like .env or .git
+                // Block hidden files and directories like .env or .git
                 if s.starts_with('.') {
                     return None;
                 }
@@ -96,8 +123,8 @@ pub fn validate_and_resolve(req: HttpRequest, docroot: &Path) -> Option<PathBuf>
                 // Ignore "." (current directory)
             }
 
+            // Block traversal attacks
             Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                // Block path traversal like ../ or absolute paths
                 return None;
             }
         }
