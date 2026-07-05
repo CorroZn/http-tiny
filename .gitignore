@@ -1,0 +1,14 @@
+/target/
+Cargo.lock
+**/*.rs.bk
+.vscode/
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
+.rustc_info.json
+*.log
+**/debug/
+**/release/
+tarpaulin-report.html
+cobertura.xml
