@@ -53,12 +53,13 @@ const SERVER_PORT: u16 = 8080;
 //                                        └── Determine Content-Type based on file extension and append it to the response header
 //
 // #############################################################################################
-fn main() -> std::io::Result<()> {
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
     // Use custom flags if the user specified some, otherwise use the defaults
     let (docroot, ip, port) = flags::flags_handler();
 
     // Listen for incoming TCP connections
-    tcp_listen::tcp_listen(&docroot, &ip, port)?;
+    tcp_listen::tcp_listen(&docroot, &ip, port).await?;
 
     Ok(())
 }

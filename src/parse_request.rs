@@ -1,9 +1,10 @@
 // Copyright (C) 2026 CorroZn <corrozn@proton.me>.
 // SPDX-License-Identifier: GPL-2.0-only
 
-use std::io::Read; // Enable reading methods on I/O types like File and TcpStream.
-use std::net::TcpStream; // TCP stream type used for network communication.
-use std::path::{Path, PathBuf}; // Filesystem path type for working with file and directory paths.
+use std::path::{Path, PathBuf};
+use tokio::io::AsyncReadExt; // Enable Tokio reading methods on I/O types like File and TcpStream
+use tokio::net::TcpStream; // Tokio TCP stream type used for network communication.
+use tokio::time::{Duration, timeout}; // Drop the worker after a specific timeout // Filesystem path type for working with file and directory paths
 
 use crate::MAX_REQUEST; // Used for checking if the HTTP request exceeds the size limit
 use crate::validate_request::{HttpRequest, validate_and_resolve}; // Validates the HTTP request
@@ -12,9 +13,9 @@ use crate::validate_request::{HttpRequest, validate_and_resolve}; // Validates t
 // HTTP request reading, parsing and validating function
 // reads → parses → validates → resolves filesystem path
 // #############################################################################################
-pub fn http_parse_validate(stream: &mut TcpStream, docroot: &Path) -> Option<PathBuf> {
+pub async fn http_parse_validate(stream: &mut TcpStream, docroot: &Path) -> Option<PathBuf> {
     // Read raw HTTP request from socket
-    let raw = read_request(stream)?;
+    let raw = read_request(stream).await?;
 
     // Convert bytes → string (lossy to avoid UTF-8 hard failure)
     let request = String::from_utf8_lossy(&raw);
@@ -59,13 +60,17 @@ fn parse_request(request: &str) -> Option<HttpRequest> {
 // - "\r\n\r\n" is found (end of HTTP headers)
 // - OR request exceeds MAX_REQUEST
 // #############################################################################################
-fn read_request(stream: &mut TcpStream) -> Option<Vec<u8>> {
+async fn read_request(stream: &mut TcpStream) -> Option<Vec<u8>> {
     let mut request = Vec::new();
 
     loop {
         let mut buf = [0u8; 512];
 
-        let n = stream.read(&mut buf).ok()?;
+        // Drop connection after timeout
+        let n = match timeout(Duration::from_secs(5), stream.read(&mut buf)).await {
+            Ok(Ok(n)) => n,
+            _ => return None,
+        };
 
         // Connection closed
         if n == 0 {
@@ -74,7 +79,7 @@ fn read_request(stream: &mut TcpStream) -> Option<Vec<u8>> {
 
         request.extend_from_slice(&buf[..n]);
 
-        // Prevent abuse / DoS
+        // Drop connection if request is too large
         if request.len() > MAX_REQUEST {
             return None;
         }
