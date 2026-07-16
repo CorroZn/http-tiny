@@ -10,8 +10,9 @@ use crate::MAX_REQUEST; // Used for checking if the HTTP request exceeds the siz
 use crate::validate_request::{HttpRequest, validate_and_resolve}; // Validates the HTTP request
 
 // #############################################################################################
-// HTTP request reading, parsing and validating function
-// reads → parses → validates → resolves filesystem path
+// HTTP request parsing and validation.
+// Reads the HTTP request, parses the request line, validates it,
+// and resolves the requested filesystem path.
 // #############################################################################################
 pub async fn http_parse_validate(stream: &mut TcpStream, docroot: &Path) -> Option<PathBuf> {
     // Read raw HTTP request from socket
@@ -20,18 +21,16 @@ pub async fn http_parse_validate(stream: &mut TcpStream, docroot: &Path) -> Opti
     // Convert bytes → string (lossy to avoid UTF-8 hard failure)
     let request = String::from_utf8_lossy(&raw);
 
-    // Call the parse_request() function
-    // Parse request line (method, url, version)
+    // Parse the request line (method, URL, version).
     let parsed = parse_request(&request)?;
 
-    // Call the validate_and_resolve() function
     // Validate + convert URL into safe filesystem path
     validate_and_resolve(parsed, docroot)
 }
 
 // #############################################################################################
-// Parse HTTP request function
-// Example:
+// Parses the HTTP request line:
+//
 // GET /index.html HTTP/1.1
 // #############################################################################################
 fn parse_request(request: &str) -> Option<HttpRequest> {
@@ -64,9 +63,10 @@ async fn read_request(stream: &mut TcpStream) -> Option<Vec<u8>> {
     let mut request = Vec::new();
 
     loop {
-        let mut buf = [0u8; 512];
+        // Application read buffer for TCP socket data.
+        let mut buf = [0u8; 8192];
 
-        // Drop connection after timeout
+        // Abort the connection if no data is received within the timeout.
         let n = match timeout(Duration::from_secs(5), stream.read(&mut buf)).await {
             Ok(Ok(n)) => n,
             _ => return None,
@@ -79,7 +79,7 @@ async fn read_request(stream: &mut TcpStream) -> Option<Vec<u8>> {
 
         request.extend_from_slice(&buf[..n]);
 
-        // Drop connection if request is too large
+        // Reject requests that exceed the configured maximum size.
         if request.len() > MAX_REQUEST {
             return None;
         }

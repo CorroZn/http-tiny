@@ -13,17 +13,17 @@ pub struct HttpRequest {
 }
 
 // #############################################################################################
-// HTTP requesr validation function
+// HTTP request validation function.
 // Checks if the HTTP request is valid and safely converts the URL into a filesystem path.
 // Returns `Some(PathBuf)` if valid, otherwise `None`.
 // #############################################################################################
 pub fn validate_and_resolve(req: HttpRequest, docroot: &Path) -> Option<PathBuf> {
-    // Only allow GET requests for now
+    // Only allow GET requests.
     if req.method != "GET" {
         return None;
     }
 
-    // Only HTTP/1.1 for now
+    // Only support HTTP/1.1.
     if req.version != "HTTP/1.1" {
         return None;
     }
@@ -54,10 +54,8 @@ pub fn validate_and_resolve(req: HttpRequest, docroot: &Path) -> Option<PathBuf>
         | b'_'
         | b'.'
         | b'/'
-        | b'?'
         | b'='
         | b'%'
-        | b'#'
         | b'&'
         | b'$'
         | b'@'
@@ -85,11 +83,11 @@ pub fn validate_and_resolve(req: HttpRequest, docroot: &Path) -> Option<PathBuf>
     }
 
     // Build final URL path string
-    let mut final_url = url.clone();
+    let mut final_url = url;
 
-    // If URL ends with '/', serve index.html automatically
-    // Example: http://example.corm/ -> http://example.corm/index.html
-    // Example: http://example.corm/folder/ -> http://example.corm/folder/index.html
+    // If URL ends with '/', serve index.html file automatically if it exists.
+    // Example: "http://example.com/" serves "http://example.com/index.html"
+    // Example: "http://example.com/folder/" serves "http://example.com/folder/index.html"
     if is_dir_request {
         if !final_url.ends_with('/') {
             final_url.push('/');
@@ -97,7 +95,7 @@ pub fn validate_and_resolve(req: HttpRequest, docroot: &Path) -> Option<PathBuf>
         final_url.push_str("index.html");
     }
 
-    // Convert into Path
+    // Convert the normalized URL into a relative filesystem path.
     let path = Path::new(final_url.trim_start_matches('/'));
 
     // Convert document root into a mutable path buffer
@@ -130,7 +128,8 @@ pub fn validate_and_resolve(req: HttpRequest, docroot: &Path) -> Option<PathBuf>
         }
     }
 
-    // Convert to absolute canonical path (resolves symlinks etc.)
+    // Resolve the final path to eliminate "..", symlinks, and other
+    // filesystem aliases before verifying it remains inside the document root.
     let canonical = root.canonicalize().ok()?;
 
     // Ensure the final path is still inside docroot (security check)

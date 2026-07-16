@@ -7,22 +7,23 @@ use tokio::net::TcpListener; // TCP listener for accepting incoming client conne
 use crate::client::http_handle_client; // Handle the client connection.
 
 // #############################################################################################
-// TCP Listener function
-// Lisens for connecting clients and pawns a new task that handles the client connection.
+// TCP listener function.
+// Listens for incoming client connections and spawns a new task to
+// handle each connection.
 // #############################################################################################
 pub async fn tcp_listen(docroot: &str, ip: &str, port: u16) -> std::io::Result<()> {
     // Start listening for connections on the given IP address and port.
     let listener = TcpListener::bind((ip, port)).await?;
 
-    // Share the document root between all client threads.
+    // Share the document root between all client tasks.
     let docroot = Arc::new(docroot.to_owned());
 
-    // Keep accepting new client connections.
+    // Keep accepting new client connections until an I/O error occurs.
     loop {
         // Accept incoming TCP connection asynchronously (discard client IP address for now).
         let (stream, _) = listener.accept().await?;
 
-        // Share the ownership of document root to the new task.
+        // Clone the shared document root for the new task.
         let docroot = Arc::clone(&docroot);
 
         // Spawn a task and let it handle the client connection.

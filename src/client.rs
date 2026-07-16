@@ -9,18 +9,15 @@ use crate::parse_request::http_parse_validate; // Parses and validates incoming 
 use crate::response::http_response; // Serves HTTP responses to connected clients.
 
 // #############################################################################################
-// HTTP client handler function
-// Handles the client connection, parses and validates the request header
+// HTTP client handler function.
+// Handles a single client connection by parsing and validating the
+// HTTP request before serving the requested resource.
 // #############################################################################################
-pub async fn http_handle_client(stream: TcpStream, docroot: Arc<String>) {
-    // Create a new thread to handle this client connection.
-    // This stream is used to read the request and send the response.
-    let mut stream = stream;
-
+pub async fn http_handle_client(mut stream: TcpStream, docroot: Arc<String>) {
     // Check if the request is valid and get the requested file path.
     if let Some(path) = http_parse_validate(&mut stream, Path::new(docroot.as_str())).await {
         // Send the requested file, or a 404 page if it doesn't exist.
         let _ = http_response(stream, &path).await;
     }
-    // The connection is closed automatically when the thread ends.
+    // The connection is closed automatically when this task ends.
 }
