@@ -10,6 +10,8 @@ This repository welcomes AI-assisted development when used responsibly, with hum
 
 The primary goal is to produce code that is simple, correct, secure, portable, and easy for a human to understand, review, and maintain.
 
+Contributions are evaluated on their technical quality and compliance with this project's standards, regardless of the tools and methods used to produce them.
+
 ## General Principles
 
 - Prefer small, focused changes.
@@ -139,7 +141,7 @@ When making changes:
 
 ## Security
 
-Treat all generated code as untrusted until reviewed.
+All changes should be reviewed and validated before they are considered ready for inclusion.
 
 - Validate inputs.
 - Avoid introducing unnecessary attack surface or security-sensitive complexity.
