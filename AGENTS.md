@@ -1,19 +1,29 @@
 # AGENTS.md
 
-## AI Introduction
+## Introduction
 
-This project is called "http-tiny". It is a lightweight HTTP server written in Rust. This basic HTTP server serves static websites. The document root, binding IP address, and port are user customizable by running the executable with the appropriate arguments.
+This project is called "http-tiny". It is a lightweight HTTP server written in Rust. It serves static websites. The document root, binding IP address, and port are user customizable by running the executable with the appropriate arguments.
+
+The goal of this project is to provide an HTTP server that is easy to deploy, lightweight, and fast. Deployment target systems can range from embedded systems or other systems with very low hardware specifications to container images and other virtual environments with no runtime libraries and core utilities present.
+
+This HTTP server will run entirely in user-space and can also be executed by unprivileged users if they choose a custom document root that they have access to and an unprivileged listening port.
 
 ## Purpose
 
-This repository welcomes AI-assisted development when used responsibly, with human review and appropriate testing.
+This repository welcomes both human-written and AI-generated code, provided contributions receive appropriate review and meet this project's quality standards.
 
-The primary goal is to produce code that is simple, correct, secure, portable, and easy for a human to understand, review, and maintain.
+There are no requirements regarding how code is written or which IDEs, AI models, coding assistants, or other development tools are used during its creation.
 
-Contributions are evaluated on their technical quality and compliance with this project's standards, regardless of the tools and methods used to produce them.
+There are no minimum requirements for human authorship, provided the standards described in this AGENTS.md for correctness, stability, performance, security, maintainability, and portability are met.
+
+The primary goal is to produce code that is simple, correct, secure, portable, and easy for humans to understand, review, and maintain.
+
+Contributions are evaluated solely based on their technical quality and compliance with this project's standards, regardless of the tools or methods used to produce them.
+
 
 ## General Principles
 
+- Favor predictable behavior over feature richness.
 - Prefer small, focused changes.
 - Do not modify unrelated code.
 - Do not add features, configuration options, or behavior unless requested.
@@ -178,7 +188,7 @@ When modifying request handling:
 
 ## Testing
 
-Before proposing changes:
+Before considering a change complete:
 
 - Run formatting checks.
 - Run relevant tests.
