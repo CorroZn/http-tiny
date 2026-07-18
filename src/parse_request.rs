@@ -25,7 +25,7 @@ pub async fn http_parse_validate(stream: &mut TcpStream, docroot: &Path) -> Opti
     let parsed = parse_request(&request)?;
 
     // Validate + convert URL into safe filesystem path
-    validate_and_resolve(parsed, docroot)
+    validate_and_resolve(&parsed, docroot)
 }
 
 // #############################################################################################

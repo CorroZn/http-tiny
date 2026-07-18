@@ -17,7 +17,7 @@ pub struct HttpRequest {
 // Checks if the HTTP request is valid and safely converts the URL into a filesystem path.
 // Returns `Some(PathBuf)` if valid, otherwise `None`.
 // #############################################################################################
-pub fn validate_and_resolve(req: HttpRequest, docroot: &Path) -> Option<PathBuf> {
+pub fn validate_and_resolve(req: &HttpRequest, docroot: &Path) -> Option<PathBuf> {
     // Only allow GET requests.
     if req.method != "GET" {
         return None;
@@ -28,39 +28,23 @@ pub fn validate_and_resolve(req: HttpRequest, docroot: &Path) -> Option<PathBuf>
         return None;
     }
 
-    // Normalize URL first
-    let url = req.url.replace('\\', "/").to_ascii_lowercase();
+    // Canonicalize the document root
+    let canonical_root = docroot.canonicalize().ok()?;
 
-    // Split off query + fragment into an owned string
-    let mut url = url.split(['?', '#']).next().unwrap_or("").to_string();
+    // Normalize path separators.
+    let url = req.url.replace('\\', "/");
 
-    // Collapse repeated slashes like into /
-    while url.contains("//") {
-        url = url.replace("//", "/");
-    }
+    // Strip query string and fragment.
+    let url = url.split(['?', '#']).next().unwrap_or("");
+
+    // Collapse repeated slashes.
+    let url = collapse_slashes(url);
+
+    // Decode percent-encoded characters.
+    let url = percent_decode(&url)?;
 
     // URL must start with a slash
     if !url.starts_with('/') {
-        return None;
-    }
-
-    // Allowed character check
-    if !url.bytes().all(|b| {
-        matches!(
-            b,
-            b'a'..=b'z'
-        | b'0'..=b'9'
-        | b'-'
-        | b'_'
-        | b'.'
-        | b'/'
-        | b'='
-        | b'%'
-        | b'&'
-        | b'$'
-        | b'@'
-        )
-    }) {
         return None;
     }
 
@@ -128,15 +112,87 @@ pub fn validate_and_resolve(req: HttpRequest, docroot: &Path) -> Option<PathBuf>
         }
     }
 
-    // Resolve the final path to eliminate "..", symlinks, and other
-    // filesystem aliases before verifying it remains inside the document root.
+
     let canonical = root.canonicalize().ok()?;
 
     // Ensure the final path is still inside docroot (security check)
-    if !canonical.starts_with(docroot) {
+    if !canonical.starts_with(&canonical_root) {
         return None;
     }
 
     // Return the safe resolved filesystem path
     Some(canonical)
+}
+
+// #############################################################################################
+// Convert a single hexadecimal digit into its numeric value.
+// #############################################################################################
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+// #############################################################################################
+// Decode percent-encoded characters in a URL path.
+// Returns None if the input contains malformed percent escapes.
+// #############################################################################################
+fn percent_decode(input: &str) -> Option<String> {
+    let bytes = input.as_bytes();
+    let mut output = String::with_capacity(input.len());
+
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if bytes[i] != b'%' {
+            output.push(bytes[i] as char);
+            i += 1;
+            continue;
+        }
+
+        // '%' must be followed by exactly two hexadecimal digits.
+        if i + 2 >= bytes.len() {
+            return None;
+        }
+
+        let high = hex_value(bytes[i + 1])?;
+        let low = hex_value(bytes[i + 2])?;
+
+        let decoded = (high << 4) | low;
+
+        // Reject embedded NUL bytes.
+        if decoded == 0 {
+            return None;
+        }
+
+        output.push(decoded as char);
+        i += 3;
+    }
+
+    Some(output)
+}
+
+// #############################################################################################
+// Collapse repeated slashes into a single slash.
+// #############################################################################################
+fn collapse_slashes(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    let mut previous_was_slash = false;
+
+    for ch in path.chars() {
+        if ch == '/' {
+            if !previous_was_slash {
+                out.push('/');
+            }
+            previous_was_slash = true;
+        } else {
+            out.push(ch);
+            previous_was_slash = false;
+        }
+    }
+
+    out
 }
