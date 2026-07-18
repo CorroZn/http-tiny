@@ -1,7 +1,7 @@
 [package]
 name = "http-tiny"
 authors = ["CorroZn <corrozn@proton.me>"]
-version = "0.1.3"
+version = "0.1.4"
 edition = "2024"
 license = "GPL-2.0-only"
 repository = "https://github.com/CorroZn/http-tiny"
