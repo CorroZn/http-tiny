@@ -64,6 +64,14 @@ Before modifying code:
 - Keep Clippy warnings to a minimum.
 - Ensure the project compiles before proposing changes.
 - Add or update tests when changing behavior.
+- Treat every function signature as a contract, not just a type declaration.
+- Request the minimum ownership, mutability, and access required.
+- Every parameter is a permission request—ask for no more than the implementation actually needs.
+- Make signatures reflect exactly what the function reads or modifies.
+- Prefer borrowing specific values or fields over borrowing an entire object (e.g. `&mut self`) when possible.
+- When the borrow checker complains, first consider whether the signature is too broad before introducing clones or interior mutability.
+- Keep implementation details behind stable function signatures; changing the body should not require changing the contract.
+- Optimize APIs for clear ownership and borrowing semantics, not just convenience.
 
 ## Code Quality
 
