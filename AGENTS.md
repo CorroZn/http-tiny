@@ -23,6 +23,8 @@ Contributions are evaluated solely based on their technical quality and complian
 
 ## General Principles
 
+All code must always satisfy the three core requirements of this project: fast, simple, and secure. If a solution sacrifices one or more requirements, justify the tradeoff explicitly and why the project still benefits from the change.
+
 - Favor predictable behavior over feature richness.
 - Prefer small, focused changes.
 - Do not modify unrelated code.
@@ -32,7 +34,7 @@ Contributions are evaluated solely based on their technical quality and complian
 - Favor readability and maintainability over cleverness.
 - Avoid unnecessary dependencies.
 - Preserve backward compatibility unless the task explicitly requires otherwise.
-- All code must satisfy three requirements: fast, simple, and secure. If a solution sacrifices one, justify the tradeoff explicitly.
+- Do not make assumptions. If requirements are ambiguous, ask for clarification.
 
 ## Priority Order
 
