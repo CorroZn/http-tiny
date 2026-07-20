@@ -32,6 +32,7 @@ Contributions are evaluated solely based on their technical quality and complian
 - Favor readability and maintainability over cleverness.
 - Avoid unnecessary dependencies.
 - Preserve backward compatibility unless the task explicitly requires otherwise.
+- All code must satisfy three requirements: fast, simple, and secure. If a solution sacrifices one, justify the tradeoff explicitly.
 
 ## Priority Order
 
