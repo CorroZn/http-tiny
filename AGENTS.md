@@ -20,7 +20,6 @@ The primary goal is to produce code that is simple, correct, secure, portable, a
 
 Contributions are evaluated solely based on their technical quality and compliance with this project's standards, regardless of the tools or methods used to produce them.
 
-
 ## General Principles
 
 All code must always satisfy the three core requirements of this project: fast, simple, and secure. If a solution sacrifices one or more requirements, justify the tradeoff explicitly and why the project still benefits from the change.
@@ -32,9 +31,12 @@ All code must always satisfy the three core requirements of this project: fast, 
 - Do not redesign existing functionality unless required by the task.
 - Follow the existing architecture and coding style.
 - Favor readability and maintainability over cleverness.
-- Avoid unnecessary dependencies.
+- Avoid adding unnecessary dependencies. If a new dependency is required, explain why the project will still benefit from it.
 - Preserve backward compatibility unless the task explicitly requires otherwise.
 - Do not make assumptions. If requirements are ambiguous, ask for clarification.
+- Follow the principle of least privilege by ensuring code operates only with the lowest permissions required for its task.
+- Follow the principle of data confinement by ensuring code only reads, modifies, or exposes the data required for its purpose.
+- Never trust external input and always treat data from external sources as untrusted until it has been validated and sanitized.
 
 ## Priority Order
 
