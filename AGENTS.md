@@ -38,6 +38,20 @@ All code must always satisfy the three core requirements of this project: fast, 
 - Follow the principle of data confinement by ensuring code only reads, modifies, or exposes the data required for its purpose.
 - Never trust external input and always treat data from external sources as untrusted until it has been validated and sanitized.
 
+## Ensuring software longevity
+
+Write software so that it makes as few assumptions as possible about its environment and can be adapted to changes with minimal effort.
+
+- Keep it simple: Use complexity only where it provides real value.
+- Use open standards: Use established protocols and file formats instead of proprietary formats.
+- Loose coupling: Clearly separate components and connect them via stable interfaces.
+- Separate data and logic: Do not hard-code configuration, plugins, and data.
+- Ensure backward compatibility: Support existing data and interfaces for as long as possible.
+- Minimize dependencies: Choose each external library carefully.
+- Code defensively: Validate inputs and handle error cases cleanly.
+- Document the “why”: Record decisions in a way that is easy to understand.
+- Optimize for adaptability: Changes should be possible locally and with minimal effort.
+
 ## Priority Order
 
 When instructions conflict, follow this order:
