@@ -9,13 +9,12 @@ use std::path::Path; // Filesystem path type for representing file and directory
 // Unknown or extensionless files default to "application/octet-stream".
 // #############################################################################################
 pub fn http_mime(path: &Path) -> &'static str {
-
     // Determine the MIME type based on the file extension.
     let extension = path
-    .extension()
-    .and_then(|ext| ext.to_str())
-    // Normalize uppercase file extensions to lowercase for matching.
-    .map(|ext| ext.to_ascii_lowercase());
+        .extension()
+        .and_then(|ext| ext.to_str())
+        // Normalize uppercase file extensions to lowercase for matching.
+        .map(|ext| ext.to_ascii_lowercase());
 
     // Supported file extensions and their corresponding MIME types.
     match extension.as_deref() {

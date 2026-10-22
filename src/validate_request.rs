@@ -6,98 +6,65 @@ use std::path::{Component, Path, PathBuf}; // Used for working with filesystem p
 // A simple representation of the first line of an HTTP request.
 // < METHOD > < PATH > < HTTP/Version >
 // Example: "GET /index.html HTTP/1.1"
-pub struct HttpRequest {
-    pub method: String,
-    pub url: String,
-    pub version: String,
+pub struct HttpRequest<'a> {
+    pub method: &'a str,
+    pub url: &'a str,
+    pub version: &'a str,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PathError {
+    BadRequest,
+    NotFound,
 }
 
 // #############################################################################################
 // HTTP request validation function.
 // Checks if the HTTP request is valid and safely converts the URL into a filesystem path.
-// Returns `Some(PathBuf)` if valid, otherwise `None`.
+// Returns the resolved path if valid, otherwise a bounded request error.
+// `canonical_root` is opened once by the listener before requests are handled.
 // #############################################################################################
-pub fn validate_and_resolve(req: &HttpRequest, docroot: &Path) -> Option<PathBuf> {
+pub fn validate_and_resolve(
+    req: &HttpRequest<'_>,
+    canonical_root: &Path,
+) -> Result<PathBuf, PathError> {
     // Only allow GET requests.
     if req.method != "GET" {
-        return None;
+        return Err(PathError::NotFound);
     }
 
     // Only support HTTP/1.1.
     if req.version != "HTTP/1.1" {
-        return None;
+        return Err(PathError::NotFound);
     }
 
-    // Canonicalize the document root
-    let canonical_root = docroot.canonicalize().ok()?;
+    // Strip the query string and fragment before decoding the path.
+    let url_bytes = req.url.as_bytes();
+    let path_end = url_bytes
+        .iter()
+        .position(|byte| matches!(byte, b'?' | b'#'))
+        .unwrap_or(url_bytes.len());
+    let mut url = percent_decode(&url_bytes[..path_end]).ok_or(PathError::BadRequest)?;
 
-    // Normalize path separators.
-    let url = req.url.replace('\\', "/");
-
-    // Strip query string and fragment.
-    let url = url.split(['?', '#']).next().unwrap_or("");
-
-    // Collapse repeated slashes.
-    let url = collapse_slashes(url);
-
-    // Decode percent-encoded characters.
-    let url = percent_decode(&url)?;
+    // Decode escapes before normalizing separators and checking path components.
+    normalize_path(&mut url);
+    let url = std::str::from_utf8(&url).map_err(|_| PathError::BadRequest)?;
 
     // URL must start with a slash
     if !url.starts_with('/') {
-        return None;
+        return Err(PathError::BadRequest);
     }
 
-    // Decide whether this is a directory request
-    let mut is_dir_request = url.ends_with('/');
-
-    // Check "/subdirectory" → if it exists as directory, treat it as a directory
-    if !is_dir_request {
-        // Start from the document root and build a candidate filesystem path
-        let mut candidate = docroot.to_path_buf();
-
-        // Append the requested URL path (without leading '/')
-        candidate.push(url.trim_start_matches('/'));
-
-        // If this path exists and is a directory, treat it as a directory request
-        // so we can later serve its default index.html file
-        if candidate.is_dir() {
-            is_dir_request = true;
-        }
-    }
-
-    // Build final URL path string
-    let mut final_url = url;
-
-    // If URL ends with '/', serve index.html file automatically if it exists.
-    // Example: "http://example.com/" serves "http://example.com/index.html"
-    // Example: "http://example.com/folder/" serves "http://example.com/folder/index.html"
-    if is_dir_request {
-        if !final_url.ends_with('/') {
-            final_url.push('/');
-        }
-        final_url.push_str("index.html");
-    }
-
-    // Convert the normalized URL into a relative filesystem path.
-    let path = Path::new(final_url.trim_start_matches('/'));
-
-    // Convert document root into a mutable path buffer
-    let mut root = docroot.to_path_buf();
-
-    // Walk through path components safely
-    for component in path.components() {
+    // Convert the normalized URL into a safe path under the document root.
+    let mut root = canonical_root.to_path_buf();
+    for component in Path::new(url.trim_start_matches('/')).components() {
         match component {
             Component::Normal(name) => {
-                // Convert component to string for validation
-                let s = name.to_string_lossy();
-
                 // Block hidden files and directories like .env or .git
-                if s.starts_with('.') {
-                    return None;
+                if name.to_string_lossy().starts_with('.') {
+                    return Err(PathError::NotFound);
                 }
 
-                // Append safe path component
                 root.push(name);
             }
 
@@ -107,21 +74,33 @@ pub fn validate_and_resolve(req: &HttpRequest, docroot: &Path) -> Option<PathBuf
 
             // Block traversal attacks
             Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                return None;
+                return Err(PathError::NotFound);
             }
         }
     }
 
+    // Serve index.html for explicit and implicit directory requests.
+    if url.ends_with('/') || root.is_dir() {
+        root.push("index.html");
+    }
 
-    let canonical = root.canonicalize().ok()?;
+    let canonical = root.canonicalize().map_err(|_| PathError::NotFound)?;
 
     // Ensure the final path is still inside docroot (security check)
-    if !canonical.starts_with(&canonical_root) {
-        return None;
+    let relative = canonical
+        .strip_prefix(canonical_root)
+        .map_err(|_| PathError::NotFound)?;
+
+    // A symlink can point into a hidden directory, so check the resolved path too.
+    if relative.components().any(|component| match component {
+        Component::Normal(name) => name.to_string_lossy().starts_with('.'),
+        _ => false,
+    }) {
+        return Err(PathError::NotFound);
     }
 
     // Return the safe resolved filesystem path
-    Some(canonical)
+    Ok(canonical)
 }
 
 // #############################################################################################
@@ -137,29 +116,30 @@ fn hex_value(byte: u8) -> Option<u8> {
 }
 
 // #############################################################################################
-// Decode percent-encoded characters in a URL path.
-// Returns None if the input contains malformed percent escapes.
+// Decode percent-encoded bytes in a URL path.
+// Returns None if the input contains malformed escapes or an embedded NUL.
 // #############################################################################################
-fn percent_decode(input: &str) -> Option<String> {
-    let bytes = input.as_bytes();
-    let mut output = String::with_capacity(input.len());
-
+fn percent_decode(input: &[u8]) -> Option<Vec<u8>> {
+    let mut output = Vec::with_capacity(input.len());
     let mut i = 0;
 
-    while i < bytes.len() {
-        if bytes[i] != b'%' {
-            output.push(bytes[i] as char);
+    while i < input.len() {
+        if input[i] != b'%' {
+            if input[i] == 0 {
+                return None;
+            }
+            output.push(input[i]);
             i += 1;
             continue;
         }
 
         // '%' must be followed by exactly two hexadecimal digits.
-        if i + 2 >= bytes.len() {
+        if i + 2 >= input.len() {
             return None;
         }
 
-        let high = hex_value(bytes[i + 1])?;
-        let low = hex_value(bytes[i + 2])?;
+        let high = hex_value(input[i + 1])?;
+        let low = hex_value(input[i + 2])?;
 
         let decoded = (high << 4) | low;
 
@@ -168,7 +148,7 @@ fn percent_decode(input: &str) -> Option<String> {
             return None;
         }
 
-        output.push(decoded as char);
+        output.push(decoded);
         i += 3;
     }
 
@@ -176,23 +156,205 @@ fn percent_decode(input: &str) -> Option<String> {
 }
 
 // #############################################################################################
-// Collapse repeated slashes into a single slash.
+// Normalize URL separators and collapse repeated slashes in place.
 // #############################################################################################
-fn collapse_slashes(path: &str) -> String {
-    let mut out = String::with_capacity(path.len());
+fn normalize_path(path: &mut Vec<u8>) {
+    let mut write = 0;
     let mut previous_was_slash = false;
 
-    for ch in path.chars() {
-        if ch == '/' {
-            if !previous_was_slash {
-                out.push('/');
-            }
-            previous_was_slash = true;
+    for read in 0..path.len() {
+        let byte = if path[read] == b'\\' {
+            b'/'
         } else {
-            out.push(ch);
-            previous_was_slash = false;
+            path[read]
+        };
+
+        if byte == b'/' && previous_was_slash {
+            continue;
+        }
+
+        path[write] = byte;
+        write += 1;
+        previous_was_slash = byte == b'/';
+    }
+
+    path.truncate(write);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{HttpRequest, validate_and_resolve};
+    use std::fs::{self, create_dir};
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static NEXT_ROOT: AtomicUsize = AtomicUsize::new(0);
+
+    struct TestRoot(PathBuf);
+
+    impl TestRoot {
+        fn new() -> Self {
+            let unique = NEXT_ROOT.fetch_add(1, Ordering::Relaxed);
+            let path =
+                std::env::temp_dir().join(format!("http-tiny-{}-{unique}", std::process::id()));
+            create_dir(&path).unwrap();
+            Self(path)
         }
     }
 
-    out
+    impl Drop for TestRoot {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn get_request(url: &str) -> HttpRequest<'_> {
+        HttpRequest {
+            method: "GET",
+            url,
+            version: "HTTP/1.1",
+        }
+    }
+
+    #[test]
+    fn resolves_directory_requests_to_index_html() {
+        let root = TestRoot::new();
+        create_dir(root.0.join("assets")).unwrap();
+        fs::write(root.0.join("index.html"), b"home").unwrap();
+        fs::write(root.0.join("assets/index.html"), b"assets").unwrap();
+        let canonical_root = root.0.canonicalize().unwrap();
+
+        let index = validate_and_resolve(&get_request("/"), &canonical_root).unwrap();
+        let assets = validate_and_resolve(&get_request("/assets"), &canonical_root).unwrap();
+
+        assert_eq!(index, root.0.join("index.html").canonicalize().unwrap());
+        assert_eq!(
+            assets,
+            root.0.join("assets/index.html").canonicalize().unwrap()
+        );
+    }
+
+    #[test]
+    fn rejects_percent_encoded_parent_traversal() {
+        let root = TestRoot::new();
+        let canonical_root = root.0.canonicalize().unwrap();
+
+        assert!(validate_and_resolve(&get_request("/%2e%2e/secret.txt"), &canonical_root).is_err());
+    }
+
+    #[test]
+    fn resolves_raw_and_percent_encoded_utf8_paths() {
+        let root = TestRoot::new();
+        fs::write(root.0.join("café.txt"), b"utf8").unwrap();
+        let canonical_root = root.0.canonicalize().unwrap();
+        let expected = root.0.join("café.txt").canonicalize().unwrap();
+
+        assert_eq!(
+            validate_and_resolve(&get_request("/café.txt"), &canonical_root),
+            Ok(expected.clone())
+        );
+        assert_eq!(
+            validate_and_resolve(&get_request("/caf%C3%A9.txt"), &canonical_root),
+            Ok(expected)
+        );
+    }
+
+    #[test]
+    fn rejects_percent_encoded_invalid_utf8() {
+        let root = TestRoot::new();
+        fs::write(root.0.join("ÿ.txt"), b"not utf8").unwrap();
+        let canonical_root = root.0.canonicalize().unwrap();
+
+        assert_eq!(
+            validate_and_resolve(&get_request("/%FF.txt"), &canonical_root),
+            Err(super::PathError::BadRequest)
+        );
+    }
+
+    #[test]
+    fn decodes_separators_before_path_normalization() {
+        let root = TestRoot::new();
+        create_dir(root.0.join("nested")).unwrap();
+        fs::write(root.0.join("nested/file.txt"), b"file").unwrap();
+        let canonical_root = root.0.canonicalize().unwrap();
+
+        assert_eq!(
+            validate_and_resolve(&get_request("/nested%2ffile.txt"), &canonical_root),
+            Ok(root.0.join("nested/file.txt").canonicalize().unwrap())
+        );
+        assert_eq!(
+            validate_and_resolve(&get_request("/nested%5cfile.txt"), &canonical_root),
+            Ok(root.0.join("nested/file.txt").canonicalize().unwrap())
+        );
+    }
+
+    #[test]
+    fn preserves_query_fragment_and_encoded_delimiter_treatment() {
+        let root = TestRoot::new();
+        fs::write(root.0.join("page.html"), b"page").unwrap();
+        fs::write(root.0.join("hash#query?.txt"), b"encoded").unwrap();
+        let canonical_root = root.0.canonicalize().unwrap();
+
+        assert_eq!(
+            validate_and_resolve(
+                &get_request("/page.html?download=1#section"),
+                &canonical_root
+            ),
+            Ok(root.0.join("page.html").canonicalize().unwrap())
+        );
+        assert_eq!(
+            validate_and_resolve(&get_request("/hash%23query%3F.txt"), &canonical_root),
+            Ok(root.0.join("hash#query?.txt").canonicalize().unwrap())
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_escapes_and_encoded_nul() {
+        let root = TestRoot::new();
+        let canonical_root = root.0.canonicalize().unwrap();
+
+        for target in ["/%", "/%2", "/%GG", "/file%00.txt"] {
+            assert_eq!(
+                validate_and_resolve(&get_request(target), &canonical_root),
+                Err(super::PathError::BadRequest)
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_symlinks_that_escape_the_document_root() {
+        use std::os::unix::fs::symlink;
+
+        let fixture = TestRoot::new();
+        let docroot = fixture.0.join("www");
+        let outside = fixture.0.join("outside");
+        create_dir(&docroot).unwrap();
+        create_dir(&outside).unwrap();
+        fs::write(outside.join("secret.txt"), b"secret").unwrap();
+        symlink(&outside, docroot.join("public")).unwrap();
+        let canonical_root = docroot.canonicalize().unwrap();
+
+        assert!(validate_and_resolve(&get_request("/public/secret.txt"), &canonical_root).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn does_not_serve_hidden_files_through_visible_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let root = TestRoot::new();
+        create_dir(root.0.join(".secret")).unwrap();
+        fs::write(root.0.join(".secret/credentials.txt"), b"secret").unwrap();
+        symlink(".secret", root.0.join("public")).unwrap();
+
+        let request = HttpRequest {
+            method: "GET",
+            url: "/public/credentials.txt",
+            version: "HTTP/1.1",
+        };
+
+        let canonical_root = root.0.canonicalize().unwrap();
+        assert!(validate_and_resolve(&request, &canonical_root).is_err());
+    }
 }

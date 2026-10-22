@@ -8,10 +8,10 @@ mod flags; // Import module flags.rs
 mod mime; // Import module mime.rs
 mod parse_request; // Import module parse_request.rs
 mod response; // Import module response.rs
+mod status;
 mod tcp_listen; // Import module tcp_listen.rs
 mod validate_flags; // Import module validate_flags.rs
 mod validate_request; // Import module validate_request.rs
-mod status; // Import module status.rs
 
 // Directory that will be responsed over HTTP.
 const DOCROOT: &str = "/var/www";

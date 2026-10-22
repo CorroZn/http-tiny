@@ -24,6 +24,7 @@ Providing a standalone HTTP server that is much lighter on system ressources tha
 - Path sanitization
 - MIME type detection for common file formats
 - Simple command-line configuration
+- Bounded client handling and slow-client timeouts
 
 ---
 
@@ -244,12 +245,24 @@ Run the server:
 
 Running without any options specified will make http-tiny run with default values.
 
+The server handles up to 64 active clients. Request headers are limited to 8 KiB, with a 5-second idle timeout and a 30-second total deadline. File metadata reads and individual response writes are limited to 30 seconds; each complete response has a 5-minute deadline.
+
+Only HTTP/1.1 `GET` requests without a request body are supported. Requests must include exactly one non-empty `Host` header. Malformed requests receive `400`, unsupported methods receive `405` with `Allow: GET`, oversized headers receive `431`, unsupported HTTP versions receive `505`, and unavailable or disallowed paths receive `404`. Literal `?` and `#` start ignored query/fragment suffixes; percent-encoded `%3F` and `%23` remain part of the filename.
+
+To run as an ordinary user, choose a document root that the user can read and search and use an unprivileged port such as the default 8080. Binding ports below 1024 may require privileges depending on the operating system.
+
+The default IP `0.0.0.0` listens on all interfaces; use `-i 127.0.0.1` to limit access to the local machine. Anyone able to reach the listener can retrieve non-hidden regular files beneath the document root. Treat that root as trusted, publishable content: MIME type detection does not sanitize files. Do not store untrusted uploads there; serve them from a separate origin or as downloads.
+
+The document root is opened once at startup and remains anchored to that directory handle. Symlinks that resolve to non-hidden files inside the root remain supported; links that escape the root or resolve into hidden paths are rejected.
+
 ---
 
 ## Supported Platforms
 
 - Linux x86 (32-bit and 64-bit)
 - Linux ARM (32-bit and 64-bit)
+
+The file-confinement implementation uses Unix directory-relative opens. On non-Unix targets, the server fails at startup rather than falling back to path-based file opens.
 
 ---
 
