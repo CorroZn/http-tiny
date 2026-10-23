@@ -228,10 +228,16 @@ Run the server:
 ```
 
 
--d = Document root (Default: /var/www)
+-d = Document root (Default: `www` in the current working directory; created automatically on startup if missing)
 
 
--i = IP address to bind to (Default: 0.0.0.0)
+-i = IP address to bind to (Default: 127.0.0.1)
+
+By default, the server listens only on the local machine. To listen on all network interfaces, use `-i 0.0.0.0`:
+
+```bash
+http-tiny -i 0.0.0.0
+```
 
 
 -p = TCP port to listen on (Default: 8080)
@@ -251,7 +257,7 @@ Only HTTP/1.1 `GET` requests without a request body are supported. Requests must
 
 To run as an ordinary user, choose a document root that the user can read and search and use an unprivileged port such as the default 8080. Binding ports below 1024 may require privileges depending on the operating system.
 
-The default IP `0.0.0.0` listens on all interfaces; use `-i 127.0.0.1` to limit access to the local machine. Anyone able to reach the listener can retrieve non-hidden regular files beneath the document root. Treat that root as trusted, publishable content: MIME type detection does not sanitize files. Do not store untrusted uploads there; serve them from a separate origin or as downloads.
+By default, `127.0.0.1` limits access to the local machine. When configured with `-i 0.0.0.0`, the server listens on all interfaces; anyone who can reach it can retrieve non-hidden regular files beneath the document root. Treat that root as trusted, publishable content: MIME type detection does not sanitize files. Do not store untrusted uploads there; serve them from a separate origin or as downloads.
 
 The document root is opened once at startup and remains anchored to that directory handle. Symlinks that resolve to non-hidden files inside the root remain supported; links that escape the root or resolve into hidden paths are rejected.
 

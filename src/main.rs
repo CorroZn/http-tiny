@@ -13,15 +13,12 @@ mod tcp_listen; // Import module tcp_listen.rs
 mod validate_flags; // Import module validate_flags.rs
 mod validate_request; // Import module validate_request.rs
 
-// Directory that will be responsed over HTTP.
-const DOCROOT: &str = "/var/www";
-
 // Limit the maximum request size to 8 KB.
 // Prevents clients from sending infinite amounts of data and stalling the responser.
 const MAX_REQUEST: usize = 8192;
 
-// IP address the HTTP server will listen at, 0.0.0.0 will listen everywhere.
-const SERVER_IP: &str = "0.0.0.0";
+// IP address the HTTP server will listen at, 127.0.0.1 will listen on localhost.
+const SERVER_IP: &str = "127.0.0.1";
 
 // TCP port the HTTP server will listen at.
 const SERVER_PORT: u16 = 8080;
@@ -67,17 +64,17 @@ async fn main() -> std::io::Result<()> {
 
 // Specify the flags the user can use to run this HTTP server
 // Currently available:
-// -d - Document root the HTTP server will response, Default: /var/www
-// -i - IP address the HTTP server will bind to, Default: 0.0.0.0
+// -d - Document root the HTTP server will response, Default: ./www
+// -i - IP address the HTTP server will bind to, Default: 127.0.0.1
 // -p - Port the HTTP server will bind to, Default: 8080
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
 struct Args {
-    /// Document root (Default: /var/www)
+    /// Document root (Default: ./www)
     #[arg(short = 'd')]
     docroot: Option<String>,
 
-    /// IP address to bind to (Default: 0.0.0.0)
+    /// IP address to bind to (Default: 127.0.0.1)
     #[arg(short = 'i')]
     ip: Option<String>,
 
