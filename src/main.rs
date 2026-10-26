@@ -51,7 +51,7 @@ const SERVER_PORT: u16 = 8080;
 //                                        └── Determine Content-Type based on file extension and append it to the response header
 //
 // #############################################################################################
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread")]
 async fn main() -> std::io::Result<()> {
     // Use custom flags if the user specified some, otherwise use the defaults
     let (docroot, ip, port) = flags::flags_handler();

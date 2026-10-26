@@ -1,7 +1,7 @@
 // Copyright (C) 2026 CorroZn <corrozn@proton.me>.
 // SPDX-License-Identifier: GPL-2.0-only
 
-use std::io;
+use std::io::{self, Cursor, Write};
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::{Duration, Instant, timeout_at};
@@ -17,17 +17,17 @@ pub async fn status_ok(
     file_size: u64,
     deadline: Instant,
 ) -> io::Result<()> {
-    let headers = format!(
-        "HTTP/1.1 200 OK\r\n\
-        Content-Type: {}\r\n\
-        Content-Length: {}\r\n\
-        Connection: close\r\n\
-        X-Content-Type-Options: nosniff\r\n\
-        \r\n",
-        mime, file_size
-    );
+    let mut headers = [0u8; 256];
+    let header_len = {
+        let mut writer = Cursor::new(&mut headers[..]);
+        write!(
+            writer,
+            "HTTP/1.1 200 OK\r\nContent-Type: {mime}\r\nContent-Length: {file_size}\r\nConnection: close\r\nX-Content-Type-Options: nosniff\r\n\r\n"
+        )?;
+        writer.position() as usize
+    };
 
-    write_all_with_timeout(stream, headers.as_bytes(), deadline).await
+    write_all_with_timeout(stream, &headers[..header_len], deadline).await
 }
 
 // #############################################################################################

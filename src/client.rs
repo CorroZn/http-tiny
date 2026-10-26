@@ -349,12 +349,54 @@ mod tests {
             + 4;
 
         assert!(response.starts_with(b"HTTP/1.1 200 OK\r\n"));
+        assert_eq!(
+            &response[..header_end],
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: 5\r\nConnection: close\r\nX-Content-Type-Options: nosniff\r\n\r\n"
+        );
         assert!(
             response[..header_end]
                 .windows(17)
                 .any(|window| window == b"Content-Length: 5")
         );
         assert_eq!(&response[header_end..], b"hello");
+    }
+
+    #[tokio::test]
+    async fn serves_empty_files_with_an_empty_body() {
+        let root = TestRoot::new();
+        fs::write(root.0.join("empty.txt"), b"").unwrap();
+
+        let response = send_request(root.0.canonicalize().unwrap(), "/empty.txt").await;
+        let header_end = response
+            .windows(4)
+            .position(|window| window == [13, 10, 13, 10])
+            .unwrap()
+            + 4;
+
+        assert!(response.starts_with(b"HTTP/1.1 200 OK"));
+        assert!(
+            response[..header_end]
+                .windows(17)
+                .any(|window| window == b"Content-Length: 0")
+        );
+        assert_eq!(&response[header_end..], b"");
+    }
+
+    #[tokio::test]
+    async fn streams_large_files_without_truncation() {
+        let root = TestRoot::new();
+        let contents = vec![b'x'; 1024 * 1024 + 17];
+        fs::write(root.0.join("large.bin"), &contents).unwrap();
+
+        let response = send_request(root.0.canonicalize().unwrap(), "/large.bin").await;
+        let header_end = response
+            .windows(4)
+            .position(|window| window == [13, 10, 13, 10])
+            .unwrap()
+            + 4;
+
+        assert!(response.starts_with(b"HTTP/1.1 200 OK"));
+        assert_eq!(&response[header_end..], contents);
     }
 
     #[cfg(unix)]

@@ -1,14 +1,21 @@
 [package]
 name = "http-tiny"
 authors = ["CorroZn <corrozn@proton.me>"]
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 license = "GPL-2.0-only"
 repository = "https://github.com/CorroZn/http-tiny"
 description = "A tiny HTTP server intented for use in constrained systems."
 
 [dependencies]
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", default-features = false, features = [
+    "derive",
+    "error-context",
+    "help",
+    "std",
+    "string",
+    "usage",
+] }
 tokio = { version = "1.52.3", features = [
     "fs",
     "io-util",

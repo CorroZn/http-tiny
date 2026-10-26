@@ -9,15 +9,23 @@ use std::path::Path; // Filesystem path type for representing file and directory
 // Unknown or extensionless files default to "application/octet-stream".
 // #############################################################################################
 pub fn http_mime(path: &Path) -> &'static str {
-    // Determine the MIME type based on the file extension.
-    let extension = path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        // Normalize uppercase file extensions to lowercase for matching.
-        .map(|ext| ext.to_ascii_lowercase());
+    const MAX_EXTENSION_LENGTH: usize = 11;
+
+    let Some(extension) = path.extension().and_then(|ext| ext.to_str()) else {
+        return "application/octet-stream";
+    };
+    if extension.len() > MAX_EXTENSION_LENGTH {
+        return "application/octet-stream";
+    }
+
+    let mut normalized = [0u8; MAX_EXTENSION_LENGTH];
+    for (output, input) in normalized.iter_mut().zip(extension.bytes()) {
+        *output = input.to_ascii_lowercase();
+    }
+    let extension = std::str::from_utf8(&normalized[..extension.len()]).ok();
 
     // Supported file extensions and their corresponding MIME types.
-    match extension.as_deref() {
+    match extension {
         // HTML
         Some("htm" | "html") => "text/html; charset=utf-8",
 
@@ -147,5 +155,37 @@ pub fn http_mime(path: &Path) -> &'static str {
 
         // Unknown file type
         _ => "application/octet-stream",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::http_mime;
+    use std::path::Path;
+
+    #[test]
+    fn recognizes_ascii_case_insensitive_extensions() {
+        for (path, expected) in [
+            ("index.HTML", "text/html; charset=utf-8"),
+            ("app.Js", "application/javascript; charset=utf-8"),
+            (
+                "manifest.WEBMANIFEST",
+                "application/manifest+json; charset=utf-8",
+            ),
+        ] {
+            assert_eq!(http_mime(Path::new(path)), expected);
+        }
+    }
+
+    #[test]
+    fn unknown_extensions_use_the_binary_fallback() {
+        assert_eq!(
+            http_mime(Path::new("file.unknown")),
+            "application/octet-stream"
+        );
+        assert_eq!(
+            http_mime(Path::new("file.extension-that-is-too-long")),
+            "application/octet-stream"
+        );
     }
 }

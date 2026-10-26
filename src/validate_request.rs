@@ -1,6 +1,7 @@
 // Copyright (C) 2026 CorroZn <corrozn@proton.me>.
 // SPDX-License-Identifier: GPL-2.0-only
 
+use std::borrow::Cow;
 use std::path::{Component, Path, PathBuf}; // Used for working with filesystem paths and their individual components.
 
 // A simple representation of the first line of an HTTP request.
@@ -44,11 +45,29 @@ pub fn validate_and_resolve(
         .iter()
         .position(|byte| matches!(byte, b'?' | b'#'))
         .unwrap_or(url_bytes.len());
-    let mut url = percent_decode(&url_bytes[..path_end]).ok_or(PathError::BadRequest)?;
+    let raw_path = &req.url[..path_end];
+    let raw_path_bytes = raw_path.as_bytes();
+    let mut requires_normalization = false;
+    let mut previous_was_slash = false;
+    for &byte in raw_path_bytes {
+        if byte == 0 {
+            return Err(PathError::BadRequest);
+        }
+        if byte == b'%' || byte == b'\\' || (byte == b'/' && previous_was_slash) {
+            requires_normalization = true;
+        }
+        previous_was_slash = byte == b'/';
+    }
 
-    // Decode escapes before normalizing separators and checking path components.
-    normalize_path(&mut url);
-    let url = std::str::from_utf8(&url).map_err(|_| PathError::BadRequest)?;
+    // Keep ordinary paths borrowed; only decoded or non-canonical paths need a copy.
+    let url = if requires_normalization {
+        let mut decoded = percent_decode(raw_path_bytes).ok_or(PathError::BadRequest)?;
+        normalize_path(&mut decoded);
+        Cow::Owned(String::from_utf8(decoded).map_err(|_| PathError::BadRequest)?)
+    } else {
+        Cow::Borrowed(raw_path)
+    };
+    let url = url.as_ref();
 
     // URL must start with a slash
     if !url.starts_with('/') {
@@ -282,9 +301,18 @@ mod tests {
             validate_and_resolve(&get_request("/nested%2ffile.txt"), &canonical_root),
             Ok(root.0.join("nested/file.txt").canonicalize().unwrap())
         );
+        let expected = root.0.join("nested/file.txt").canonicalize().unwrap();
         assert_eq!(
             validate_and_resolve(&get_request("/nested%5cfile.txt"), &canonical_root),
-            Ok(root.0.join("nested/file.txt").canonicalize().unwrap())
+            Ok(expected.clone())
+        );
+        assert_eq!(
+            validate_and_resolve(&get_request("/nested//file.txt"), &canonical_root),
+            Ok(expected.clone())
+        );
+        assert_eq!(
+            validate_and_resolve(&get_request(r"/nested\file.txt"), &canonical_root),
+            Ok(expected)
         );
     }
 

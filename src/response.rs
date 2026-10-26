@@ -15,6 +15,7 @@ use crate::status::{status_not_found, status_ok, write_all_with_timeout}; // Sen
 
 pub const RESPONSE_TIMEOUT: Duration = Duration::from_secs(300);
 const RESPONSE_READ_TIMEOUT: Duration = Duration::from_secs(30);
+const RESPONSE_BUFFER_SIZE: usize = 64 * 1024;
 static FILE_OPEN_FAILURES: AtomicUsize = AtomicUsize::new(0);
 
 fn report_open_failure(kind: io::ErrorKind) {
@@ -144,8 +145,9 @@ async fn http_response_inner(
     // Send the HTTP 200 OK response headers.
     status_ok(&mut stream, mime, file_size, deadline).await?;
 
-    // Buffer used to stream file data to the TCP socket.
-    let mut buffer = [0u8; 8192];
+    // Allocate only what this response can use, up to the throughput-oriented cap.
+    let buffer_size = file_size.min(RESPONSE_BUFFER_SIZE as u64) as usize;
+    let mut buffer = vec![0u8; buffer_size];
     let mut bytes_remaining = file_size;
 
     // Read bytes from file.
