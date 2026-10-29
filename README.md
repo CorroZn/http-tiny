@@ -259,7 +259,7 @@ To run as an ordinary user, choose a document root that the user can read and se
 
 By default, `127.0.0.1` limits access to the local machine. When configured with `-i 0.0.0.0`, the server listens on all interfaces; anyone who can reach it can retrieve non-hidden regular files beneath the document root. Treat that root as trusted, publishable content: MIME type detection does not sanitize files. Do not store untrusted uploads there; serve them from a separate origin or as downloads.
 
-The document root is opened once at startup and remains anchored to that directory handle. Symlinks that resolve to non-hidden files inside the root remain supported; links that escape the root or resolve into hidden paths are rejected.
+The configured document-root path is securely reopened for each response, so replacing the directory at that path takes effect on the next request. Symlinks that resolve to non-hidden files inside the root remain supported; links that escape the root or resolve into hidden paths are rejected.
 
 ---
 

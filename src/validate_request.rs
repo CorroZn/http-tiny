@@ -23,7 +23,7 @@ pub enum PathError {
 // HTTP request validation function.
 // Checks if the HTTP request is valid and safely converts the URL into a filesystem path.
 // Returns the resolved path if valid, otherwise a bounded request error.
-// `canonical_root` is opened once by the listener before requests are handled.
+// `canonical_root` is canonicalized once by the listener before requests.
 // #############################################################################################
 pub fn validate_and_resolve(
     req: &HttpRequest<'_>,

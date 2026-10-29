@@ -27,19 +27,14 @@ fn report_open_failure(kind: io::ErrorKind) {
 
 pub struct DocumentRoot {
     canonical_path: PathBuf,
-    #[cfg(unix)]
-    directory: std::fs::File,
 }
 
 impl DocumentRoot {
     #[cfg(unix)]
     pub fn open(path: &str) -> io::Result<Self> {
         let canonical_path = std::fs::canonicalize(path)?;
-        let directory = open_root_directory(&canonical_path)?;
-        Ok(Self {
-            canonical_path,
-            directory,
-        })
+        open_root_directory(&canonical_path)?;
+        Ok(Self { canonical_path })
     }
 
     #[cfg(not(unix))]
@@ -244,6 +239,8 @@ fn open_confined_file(docroot: &DocumentRoot, path: &Path) -> io::Result<std::fs
     use std::os::fd::{AsRawFd, FromRawFd};
     use std::os::unix::ffi::OsStrExt;
 
+    // Reopen the configured pathname so atomic document-root replacement is visible.
+    let root_directory = open_root_directory(&docroot.canonical_path)?;
     let relative = path.strip_prefix(&docroot.canonical_path).map_err(|_| {
         io::Error::new(
             io::ErrorKind::PermissionDenied,
@@ -276,7 +273,7 @@ fn open_confined_file(docroot: &DocumentRoot, path: &Path) -> io::Result<std::fs
             )
         })?;
         let directory_fd = directory.as_ref().map_or_else(
-            || docroot.directory.as_raw_fd(),
+            || root_directory.as_raw_fd(),
             |file: &std::fs::File| file.as_raw_fd(),
         );
         let is_last = index + 1 == component_count;
@@ -417,8 +414,47 @@ mod tests {
         }
     }
 
+    async fn response_for(document_root: Arc<DocumentRoot>, path: PathBuf) -> Vec<u8> {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = tokio::net::TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (server, _) = listener.accept().await.unwrap();
+        let response_task = tokio::spawn(async move {
+            http_response(server, document_root, path).await.unwrap();
+        });
+
+        let mut response = Vec::new();
+        client.take(1024).read_to_end(&mut response).await.unwrap();
+        response_task.await.unwrap();
+        response
+    }
+
     #[tokio::test]
-    async fn keeps_serving_the_document_root_opened_at_startup() {
+    async fn serves_in_place_and_atomic_file_updates_on_subsequent_responses() {
+        let fixture = TestRoot::new();
+        let docroot = fixture.0.join("www");
+        create_dir(&docroot).unwrap();
+        let file_path = docroot.join("page.txt");
+        fs::write(&file_path, b"original").unwrap();
+        let document_root = Arc::new(DocumentRoot::open(docroot.to_str().unwrap()).unwrap());
+        let path = document_root.path().join("page.txt");
+
+        let original = response_for(Arc::clone(&document_root), path.clone()).await;
+        fs::write(&file_path, b"in-place").unwrap();
+        let in_place = response_for(Arc::clone(&document_root), path.clone()).await;
+        let temporary_path = docroot.join("page.txt.tmp");
+        fs::write(&temporary_path, b"atomic").unwrap();
+        fs::rename(&temporary_path, &file_path).unwrap();
+        let atomic = response_for(document_root, path).await;
+
+        assert!(original.ends_with(b"original"));
+        assert!(in_place.ends_with(b"in-place"));
+        assert!(atomic.ends_with(b"atomic"));
+    }
+
+    #[tokio::test]
+    async fn serves_the_document_root_currently_at_its_configured_path() {
         let fixture = TestRoot::new();
         let docroot = fixture.0.join("www");
         let moved_root = fixture.0.join("original");
@@ -445,7 +481,7 @@ mod tests {
         client.take(1024).read_to_end(&mut response).await.unwrap();
         response_task.await.unwrap();
 
-        assert!(response.ends_with(b"original"));
+        assert!(response.ends_with(b"replacement"));
     }
 
     #[tokio::test]
