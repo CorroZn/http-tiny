@@ -1,12 +1,4 @@
-#![forbid(unsafe_code)]
-#![deny(warnings)]
-#![deny(missing_debug_implementations)]
-#![deny(unused_must_use)]
-#![deny(unreachable_code)]
-#![deny(unused_variables)]
-#![deny(unused_imports)]
-#![deny(rust_2018_idioms)]
-#![deny(unused_attributes)]
+#![deny(unsafe_code)]
 // Copyright (C) 2026 CorroZn <corrozn@proton.me>.
 // SPDX-License-Identifier: GPL-2.0-only
 

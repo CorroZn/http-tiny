@@ -1,16 +1,8 @@
-#![forbid(unsafe_code)]
-#![deny(warnings)]
-#![deny(missing_debug_implementations)]
-#![deny(unused_must_use)]
-#![deny(unreachable_code)]
-#![deny(unused_variables)]
-#![deny(unused_imports)]
-#![deny(rust_2018_idioms)]
-#![deny(unused_attributes)]
 // Copyright (C) 2026 CorroZn <corrozn@proton.me>.
 // SPDX-License-Identifier: GPL-2.0-only
 
 use std::io;
+use std::io::Write;
 use std::sync::Arc; // Handle shared ownership.
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
@@ -32,7 +24,7 @@ static ACCEPT_FAILURES: AtomicUsize = AtomicUsize::new(0);
 // Listens for incoming client connections and spawns a new task to
 // handle each connection.
 // #############################################################################################
-pub async fn tcp_listen(docroot: &str, ip: &str, port: u16) -> std::io::Result<()> {
+pub(crate) async fn tcp_listen(docroot: &str, ip: &str, port: u16) -> std::io::Result<()> {
     // Open the document root once before sharing it with client tasks.
     let docroot = Arc::new(DocumentRoot::open(docroot)?);
 
@@ -52,8 +44,12 @@ pub async fn tcp_listen(docroot: &str, ip: &str, port: u16) -> std::io::Result<(
             }
             Err(error) if is_transient_accept_error(&error) => {
                 let failures = ACCEPT_FAILURES.fetch_add(1, Ordering::Relaxed);
-                if failures & 1023 == 0 {
-                    eprintln!("http-tiny: transient accept error ({:?})", error.kind());
+                if failures.trailing_zeros() >= 10 {
+                    let _ = writeln!(
+                        io::stderr().lock(),
+                        "http-tiny: transient accept error ({:?})",
+                        error.kind()
+                    );
                 }
                 sleep(retry_delay).await;
                 retry_delay = (retry_delay * 2).min(ACCEPT_RETRY_MAX);
@@ -122,13 +118,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn waits_for_capacity_before_accepting_another_client() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    async fn waits_for_capacity_before_accepting_another_client()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
         let clients = Arc::new(Semaphore::new(1));
-        let held_permit = Arc::clone(&clients).acquire_owned().await.unwrap();
-        let client = TcpStream::connect(listener.local_addr().unwrap())
-            .await
-            .unwrap();
+        let held_permit = Arc::clone(&clients).acquire_owned().await?;
+        let client = TcpStream::connect(listener.local_addr()?).await?;
         let mut accept_task = tokio::spawn(async move { accept_client(&listener, &clients).await });
 
         assert!(
@@ -138,12 +133,10 @@ mod tests {
         );
 
         drop(held_permit);
-        let accepted = timeout(Duration::from_secs(1), &mut accept_task)
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap();
+        let accepted = timeout(Duration::from_secs(1), &mut accept_task).await???;
         drop(accepted);
         drop(client);
+
+        Ok(())
     }
 }

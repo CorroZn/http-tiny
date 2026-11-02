@@ -1,12 +1,3 @@
-#![forbid(unsafe_code)]
-#![deny(warnings)]
-#![deny(missing_debug_implementations)]
-#![deny(unused_must_use)]
-#![deny(unreachable_code)]
-#![deny(unused_variables)]
-#![deny(unused_imports)]
-#![deny(rust_2018_idioms)]
-#![deny(unused_attributes)]
 // Copyright (C) 2026 CorroZn <corrozn@proton.me>.
 // SPDX-License-Identifier: GPL-2.0-only
 
@@ -16,14 +7,14 @@ use std::path::{Component, Path, PathBuf}; // Used for working with filesystem p
 // A simple representation of the first line of an HTTP request.
 // < METHOD > < PATH > < HTTP/Version >
 // Example: "GET /index.html HTTP/1.1"
-pub struct HttpRequest<'a> {
-    pub method: &'a str,
-    pub url: &'a str,
-    pub version: &'a str,
+pub(crate) struct HttpRequest<'a> {
+    pub(crate) method: &'a str,
+    pub(crate) url: &'a str,
+    pub(crate) version: &'a str,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PathError {
+pub(crate) enum PathError {
     BadRequest,
     NotFound,
 }
@@ -34,7 +25,7 @@ pub enum PathError {
 // Returns the resolved path if valid, otherwise a bounded request error.
 // `canonical_root` is canonicalized once by the listener before requests.
 // #############################################################################################
-pub fn validate_and_resolve(
+pub(crate) fn validate_and_resolve(
     req: &HttpRequest<'_>,
     canonical_root: &Path,
 ) -> Result<PathBuf, PathError> {
@@ -134,7 +125,7 @@ pub fn validate_and_resolve(
 // #############################################################################################
 // Convert a single hexadecimal digit into its numeric value.
 // #############################################################################################
-fn hex_value(byte: u8) -> Option<u8> {
+const fn hex_value(byte: u8) -> Option<u8> {
     match byte {
         b'0'..=b'9' => Some(byte - b'0'),
         b'a'..=b'f' => Some(byte - b'a' + 10),
@@ -221,12 +212,12 @@ mod tests {
     struct TestRoot(PathBuf);
 
     impl TestRoot {
-        fn new() -> Self {
+        fn new() -> std::io::Result<Self> {
             let unique = NEXT_ROOT.fetch_add(1, Ordering::Relaxed);
             let path =
                 std::env::temp_dir().join(format!("http-tiny-{}-{unique}", std::process::id()));
-            create_dir(&path).unwrap();
-            Self(path)
+            create_dir(&path)?;
+            Ok(Self(path))
         }
     }
 
@@ -245,37 +236,40 @@ mod tests {
     }
 
     #[test]
-    fn resolves_directory_requests_to_index_html() {
-        let root = TestRoot::new();
-        create_dir(root.0.join("assets")).unwrap();
-        fs::write(root.0.join("index.html"), b"home").unwrap();
-        fs::write(root.0.join("assets/index.html"), b"assets").unwrap();
-        let canonical_root = root.0.canonicalize().unwrap();
+    fn resolves_directory_requests_to_index_html() -> Result<(), Box<dyn std::error::Error>> {
+        let root = TestRoot::new()?;
+        create_dir(root.0.join("assets"))?;
+        fs::write(root.0.join("index.html"), b"home")?;
+        fs::write(root.0.join("assets/index.html"), b"assets")?;
+        let canonical_root = root.0.canonicalize()?;
 
-        let index = validate_and_resolve(&get_request("/"), &canonical_root).unwrap();
-        let assets = validate_and_resolve(&get_request("/assets"), &canonical_root).unwrap();
+        let index = validate_and_resolve(&get_request("/"), &canonical_root)
+            .map_err(|error| std::io::Error::other(format!("path resolution failed: {error:?}")))?;
+        let assets = validate_and_resolve(&get_request("/assets"), &canonical_root)
+            .map_err(|error| std::io::Error::other(format!("path resolution failed: {error:?}")))?;
 
-        assert_eq!(index, root.0.join("index.html").canonicalize().unwrap());
-        assert_eq!(
-            assets,
-            root.0.join("assets/index.html").canonicalize().unwrap()
-        );
+        assert_eq!(index, root.0.join("index.html").canonicalize()?);
+        assert_eq!(assets, root.0.join("assets/index.html").canonicalize()?);
+
+        Ok(())
     }
 
     #[test]
-    fn rejects_percent_encoded_parent_traversal() {
-        let root = TestRoot::new();
-        let canonical_root = root.0.canonicalize().unwrap();
+    fn rejects_percent_encoded_parent_traversal() -> Result<(), Box<dyn std::error::Error>> {
+        let root = TestRoot::new()?;
+        let canonical_root = root.0.canonicalize()?;
 
         assert!(validate_and_resolve(&get_request("/%2e%2e/secret.txt"), &canonical_root).is_err());
+
+        Ok(())
     }
 
     #[test]
-    fn resolves_raw_and_percent_encoded_utf8_paths() {
-        let root = TestRoot::new();
-        fs::write(root.0.join("café.txt"), b"utf8").unwrap();
-        let canonical_root = root.0.canonicalize().unwrap();
-        let expected = root.0.join("café.txt").canonicalize().unwrap();
+    fn resolves_raw_and_percent_encoded_utf8_paths() -> Result<(), Box<dyn std::error::Error>> {
+        let root = TestRoot::new()?;
+        fs::write(root.0.join("café.txt"), b"utf8")?;
+        let canonical_root = root.0.canonicalize()?;
+        let expected = root.0.join("café.txt").canonicalize()?;
 
         assert_eq!(
             validate_and_resolve(&get_request("/café.txt"), &canonical_root),
@@ -285,32 +279,36 @@ mod tests {
             validate_and_resolve(&get_request("/caf%C3%A9.txt"), &canonical_root),
             Ok(expected)
         );
+
+        Ok(())
     }
 
     #[test]
-    fn rejects_percent_encoded_invalid_utf8() {
-        let root = TestRoot::new();
-        fs::write(root.0.join("ÿ.txt"), b"not utf8").unwrap();
-        let canonical_root = root.0.canonicalize().unwrap();
+    fn rejects_percent_encoded_invalid_utf8() -> Result<(), Box<dyn std::error::Error>> {
+        let root = TestRoot::new()?;
+        fs::write(root.0.join("ÿ.txt"), b"not utf8")?;
+        let canonical_root = root.0.canonicalize()?;
 
         assert_eq!(
             validate_and_resolve(&get_request("/%FF.txt"), &canonical_root),
             Err(super::PathError::BadRequest)
         );
+
+        Ok(())
     }
 
     #[test]
-    fn decodes_separators_before_path_normalization() {
-        let root = TestRoot::new();
-        create_dir(root.0.join("nested")).unwrap();
-        fs::write(root.0.join("nested/file.txt"), b"file").unwrap();
-        let canonical_root = root.0.canonicalize().unwrap();
+    fn decodes_separators_before_path_normalization() -> Result<(), Box<dyn std::error::Error>> {
+        let root = TestRoot::new()?;
+        create_dir(root.0.join("nested"))?;
+        fs::write(root.0.join("nested/file.txt"), b"file")?;
+        let canonical_root = root.0.canonicalize()?;
 
         assert_eq!(
             validate_and_resolve(&get_request("/nested%2ffile.txt"), &canonical_root),
-            Ok(root.0.join("nested/file.txt").canonicalize().unwrap())
+            Ok(root.0.join("nested/file.txt").canonicalize()?)
         );
-        let expected = root.0.join("nested/file.txt").canonicalize().unwrap();
+        let expected = root.0.join("nested/file.txt").canonicalize()?;
         assert_eq!(
             validate_and_resolve(&get_request("/nested%5cfile.txt"), &canonical_root),
             Ok(expected.clone())
@@ -323,32 +321,37 @@ mod tests {
             validate_and_resolve(&get_request(r"/nested\file.txt"), &canonical_root),
             Ok(expected)
         );
+
+        Ok(())
     }
 
     #[test]
-    fn preserves_query_fragment_and_encoded_delimiter_treatment() {
-        let root = TestRoot::new();
-        fs::write(root.0.join("page.html"), b"page").unwrap();
-        fs::write(root.0.join("hash#query?.txt"), b"encoded").unwrap();
-        let canonical_root = root.0.canonicalize().unwrap();
+    fn preserves_query_fragment_and_encoded_delimiter_treatment()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = TestRoot::new()?;
+        fs::write(root.0.join("page.html"), b"page")?;
+        fs::write(root.0.join("hash#query?.txt"), b"encoded")?;
+        let canonical_root = root.0.canonicalize()?;
 
         assert_eq!(
             validate_and_resolve(
                 &get_request("/page.html?download=1#section"),
                 &canonical_root
             ),
-            Ok(root.0.join("page.html").canonicalize().unwrap())
+            Ok(root.0.join("page.html").canonicalize()?)
         );
         assert_eq!(
             validate_and_resolve(&get_request("/hash%23query%3F.txt"), &canonical_root),
-            Ok(root.0.join("hash#query?.txt").canonicalize().unwrap())
+            Ok(root.0.join("hash#query?.txt").canonicalize()?)
         );
+
+        Ok(())
     }
 
     #[test]
-    fn rejects_malformed_escapes_and_encoded_nul() {
-        let root = TestRoot::new();
-        let canonical_root = root.0.canonicalize().unwrap();
+    fn rejects_malformed_escapes_and_encoded_nul() -> Result<(), Box<dyn std::error::Error>> {
+        let root = TestRoot::new()?;
+        let canonical_root = root.0.canonicalize()?;
 
         for target in ["/%", "/%2", "/%GG", "/file%00.txt"] {
             assert_eq!(
@@ -356,34 +359,39 @@ mod tests {
                 Err(super::PathError::BadRequest)
             );
         }
+
+        Ok(())
     }
 
     #[cfg(unix)]
     #[test]
-    fn rejects_symlinks_that_escape_the_document_root() {
+    fn rejects_symlinks_that_escape_the_document_root() -> Result<(), Box<dyn std::error::Error>> {
         use std::os::unix::fs::symlink;
 
-        let fixture = TestRoot::new();
+        let fixture = TestRoot::new()?;
         let docroot = fixture.0.join("www");
         let outside = fixture.0.join("outside");
-        create_dir(&docroot).unwrap();
-        create_dir(&outside).unwrap();
-        fs::write(outside.join("secret.txt"), b"secret").unwrap();
-        symlink(&outside, docroot.join("public")).unwrap();
-        let canonical_root = docroot.canonicalize().unwrap();
+        create_dir(&docroot)?;
+        create_dir(&outside)?;
+        fs::write(outside.join("secret.txt"), b"secret")?;
+        symlink(&outside, docroot.join("public"))?;
+        let canonical_root = docroot.canonicalize()?;
 
         assert!(validate_and_resolve(&get_request("/public/secret.txt"), &canonical_root).is_err());
+
+        Ok(())
     }
 
     #[cfg(unix)]
     #[test]
-    fn does_not_serve_hidden_files_through_visible_symlinks() {
+    fn does_not_serve_hidden_files_through_visible_symlinks()
+    -> Result<(), Box<dyn std::error::Error>> {
         use std::os::unix::fs::symlink;
 
-        let root = TestRoot::new();
-        create_dir(root.0.join(".secret")).unwrap();
-        fs::write(root.0.join(".secret/credentials.txt"), b"secret").unwrap();
-        symlink(".secret", root.0.join("public")).unwrap();
+        let root = TestRoot::new()?;
+        create_dir(root.0.join(".secret"))?;
+        fs::write(root.0.join(".secret/credentials.txt"), b"secret")?;
+        symlink(".secret", root.0.join("public"))?;
 
         let request = HttpRequest {
             method: "GET",
@@ -391,7 +399,9 @@ mod tests {
             version: "HTTP/1.1",
         };
 
-        let canonical_root = root.0.canonicalize().unwrap();
+        let canonical_root = root.0.canonicalize()?;
         assert!(validate_and_resolve(&request, &canonical_root).is_err());
+
+        Ok(())
     }
 }

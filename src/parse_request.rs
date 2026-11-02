@@ -1,16 +1,8 @@
-#![forbid(unsafe_code)]
-#![deny(warnings)]
-#![deny(missing_debug_implementations)]
-#![deny(unused_must_use)]
-#![deny(unreachable_code)]
-#![deny(unused_variables)]
-#![deny(unused_imports)]
-#![deny(rust_2018_idioms)]
-#![deny(unused_attributes)]
 // Copyright (C) 2026 CorroZn <corrozn@proton.me>.
 // SPDX-License-Identifier: GPL-2.0-only
 
 use std::io;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::io::AsyncReadExt; // Enable Tokio reading methods on I/O types like File and TcpStream
@@ -27,13 +19,16 @@ static REQUEST_READ_FAILURES: AtomicUsize = AtomicUsize::new(0);
 
 fn report_read_failure(kind: io::ErrorKind) {
     let failures = REQUEST_READ_FAILURES.fetch_add(1, Ordering::Relaxed);
-    if failures & 1023 == 0 {
-        eprintln!("http-tiny: request read failed ({kind:?})");
+    if failures.trailing_zeros() >= 10 {
+        let _ = writeln!(
+            io::stderr().lock(),
+            "http-tiny: request read failed ({kind:?})"
+        );
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RequestError {
+pub(crate) enum RequestError {
     BadRequest,
     MethodNotAllowed,
     VersionNotSupported,
@@ -46,14 +41,13 @@ pub enum RequestError {
 // Reads the HTTP request, parses the request line, validates it,
 // and resolves the requested filesystem path.
 // #############################################################################################
-pub async fn http_parse_validate(
+pub(crate) async fn http_parse_validate(
     stream: &mut TcpStream,
     docroot: &Path,
 ) -> Result<Option<PathBuf>, RequestError> {
     // Read raw HTTP request from socket
-    let raw = match read_request(stream).await? {
-        Some(raw) => raw,
-        None => return Ok(None),
+    let Some(raw) = read_request(stream).await? else {
+        return Ok(None);
     };
 
     // Parse and validate the complete HTTP request.
@@ -114,69 +108,12 @@ fn parse_request(request: &[u8]) -> Result<HttpRequest<'_>, RequestError> {
 
     let header_end = request.len() - 4;
     let header_start = request_line_end + 2;
-    let mut host_seen = false;
-    let mut content_length_seen = false;
-
     if header_start < header_end {
-        let headers = &request[header_start..header_end];
-        let line_count = headers.iter().filter(|byte| **byte == 10).count() + 1;
-        for (index, line) in headers.split(|byte| *byte == 10).enumerate() {
-            let line = if index + 1 < line_count {
-                line.strip_suffix(&[13]).ok_or(RequestError::BadRequest)?
-            } else {
-                line
-            };
-            if line.is_empty() || line[0] == b' ' || line[0] == 9 {
-                return Err(RequestError::BadRequest);
-            }
-
-            let colon = line
-                .iter()
-                .position(|byte| *byte == b':')
-                .ok_or(RequestError::BadRequest)?;
-            let name = &line[..colon];
-            let value = &line[colon + 1..];
-            if name.is_empty() || !name.iter().copied().all(is_token) {
-                return Err(RequestError::BadRequest);
-            }
-            if value
-                .iter()
-                .any(|byte| (*byte < b' ' && *byte != 9) || *byte == 0x7f)
-            {
-                return Err(RequestError::BadRequest);
-            }
-
-            let value = trim_ows(value);
-            if name.eq_ignore_ascii_case(b"host") {
-                if host_seen
-                    || value.is_empty()
-                    || value
-                        .iter()
-                        .any(|byte| *byte <= b' ' || *byte >= 0x7f || *byte == b',')
-                {
-                    return Err(RequestError::BadRequest);
-                }
-                host_seen = true;
-            } else if name.eq_ignore_ascii_case(b"transfer-encoding") {
-                return Err(RequestError::BadRequest);
-            } else if name.eq_ignore_ascii_case(b"content-length") {
-                if content_length_seen || value.is_empty() || !value.iter().all(u8::is_ascii_digit)
-                {
-                    return Err(RequestError::BadRequest);
-                }
-                content_length_seen = true;
-                if value.iter().any(|byte| *byte != b'0') {
-                    return Err(RequestError::BadRequest);
-                }
-            }
-        }
-    } else if header_start != header_end + 2 {
+        validate_headers(&request[header_start..header_end])?;
+    } else {
         return Err(RequestError::BadRequest);
     }
 
-    if !host_seen {
-        return Err(RequestError::BadRequest);
-    }
     if method != "GET" {
         return Err(RequestError::MethodNotAllowed);
     }
@@ -189,6 +126,69 @@ fn parse_request(request: &[u8]) -> Result<HttpRequest<'_>, RequestError> {
         url,
         version,
     })
+}
+
+// Validate header syntax and framing before allowing the request to be served.
+fn validate_headers(headers: &[u8]) -> Result<(), RequestError> {
+    let mut host_seen = false;
+    let mut content_length_seen = false;
+    let mut lines = headers.split(|byte| *byte == 10).peekable();
+
+    while let Some(line) = lines.next() {
+        let line = if lines.peek().is_some() {
+            line.strip_suffix(&[13]).ok_or(RequestError::BadRequest)?
+        } else {
+            line
+        };
+        if line.is_empty() || line[0] == b' ' || line[0] == 9 {
+            return Err(RequestError::BadRequest);
+        }
+
+        let colon = line
+            .iter()
+            .position(|byte| *byte == b':')
+            .ok_or(RequestError::BadRequest)?;
+        let name = &line[..colon];
+        let value = &line[colon + 1..];
+        if name.is_empty() || !name.iter().copied().all(is_token) {
+            return Err(RequestError::BadRequest);
+        }
+        if value
+            .iter()
+            .any(|byte| (*byte < b' ' && *byte != 9) || *byte == 0x7f)
+        {
+            return Err(RequestError::BadRequest);
+        }
+
+        let value = trim_ows(value);
+        if name.eq_ignore_ascii_case(b"host") {
+            if host_seen
+                || value.is_empty()
+                || value
+                    .iter()
+                    .any(|byte| *byte <= b' ' || *byte >= 0x7f || *byte == b',')
+            {
+                return Err(RequestError::BadRequest);
+            }
+            host_seen = true;
+        } else if name.eq_ignore_ascii_case(b"transfer-encoding") {
+            return Err(RequestError::BadRequest);
+        } else if name.eq_ignore_ascii_case(b"content-length") {
+            if content_length_seen || value.is_empty() || !value.iter().all(u8::is_ascii_digit) {
+                return Err(RequestError::BadRequest);
+            }
+            content_length_seen = true;
+            if value.iter().any(|byte| *byte != b'0') {
+                return Err(RequestError::BadRequest);
+            }
+        }
+    }
+
+    if host_seen {
+        Ok(())
+    } else {
+        Err(RequestError::BadRequest)
+    }
 }
 
 fn valid_http_version(version: &[u8]) -> bool {
@@ -309,12 +309,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn request_timeout_is_absolute() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let client = tokio::net::TcpStream::connect(listener.local_addr().unwrap())
-            .await
-            .unwrap();
-        let (mut server, _) = listener.accept().await.unwrap();
+    async fn request_timeout_is_absolute() -> Result<(), Box<dyn std::error::Error>> {
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let client = tokio::net::TcpStream::connect(listener.local_addr()?).await?;
+        let (mut server, _) = listener.accept().await?;
         let mut request_task = tokio::spawn(async move {
             read_request_with_timeout(&mut server, Duration::from_millis(200)).await
         });
@@ -335,6 +333,11 @@ mod tests {
         }
 
         assert!(result.is_ok(), "slow request exceeded its total deadline");
-        assert!(result.unwrap().unwrap().unwrap().is_none());
+        let result = result.map_err(std::io::Error::other)??;
+        let request = result
+            .map_err(|error| std::io::Error::other(format!("request parsing failed: {error:?}")))?;
+        assert!(request.is_none());
+
+        Ok(())
     }
 }

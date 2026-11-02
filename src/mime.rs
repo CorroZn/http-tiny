@@ -1,12 +1,3 @@
-#![forbid(unsafe_code)]
-#![deny(warnings)]
-#![deny(missing_debug_implementations)]
-#![deny(unused_must_use)]
-#![deny(unreachable_code)]
-#![deny(unused_variables)]
-#![deny(unused_imports)]
-#![deny(rust_2018_idioms)]
-#![deny(unused_attributes)]
 // Copyright (C) 2026 CorroZn <corrozn@proton.me>.
 // SPDX-License-Identifier: GPL-2.0-only
 
@@ -17,10 +8,10 @@ use std::path::Path; // Filesystem path type for representing file and directory
 // Returns the appropriate MIME type for a file based on its extension.
 // Unknown or extensionless files default to "application/octet-stream".
 // #############################################################################################
-pub fn http_mime(path: &Path) -> &'static str {
+pub(crate) fn http_mime(path: &Path) -> &'static str {
     const MAX_EXTENSION_LENGTH: usize = 11;
 
-    let Some(extension) = path.extension().and_then(|ext| ext.to_str()) else {
+    let Some(extension) = path.extension().and_then(|extension| extension.to_str()) else {
         return "application/octet-stream";
     };
     if extension.len() > MAX_EXTENSION_LENGTH {
@@ -31,139 +22,144 @@ pub fn http_mime(path: &Path) -> &'static str {
     for (output, input) in normalized.iter_mut().zip(extension.bytes()) {
         *output = input.to_ascii_lowercase();
     }
-    let extension = std::str::from_utf8(&normalized[..extension.len()]).ok();
+    let Some(extension) = std::str::from_utf8(&normalized[..extension.len()]).ok() else {
+        return "application/octet-stream";
+    };
 
-    // Supported file extensions and their corresponding MIME types.
+    text_mime(extension)
+        .or_else(|| image_mime(extension))
+        .or_else(|| audio_mime(extension))
+        .or_else(|| video_mime(extension))
+        .or_else(|| other_mime(extension))
+        .unwrap_or("application/octet-stream")
+}
+
+// Return the text and structured-data MIME type for a normalized extension.
+fn text_mime(extension: &str) -> Option<&'static str> {
     match extension {
-        // HTML
-        Some("htm" | "html") => "text/html; charset=utf-8",
+        "htm" | "html" => Some("text/html; charset=utf-8"),
+        "css" => Some("text/css; charset=utf-8"),
+        "csv" => Some("text/csv; charset=utf-8"),
+        "md" | "markdown" => Some("text/markdown; charset=utf-8"),
+        "txt" | "log" => Some("text/plain; charset=utf-8"),
+        "js" | "mjs" | "cjs" => Some("application/javascript; charset=utf-8"),
+        "json" | "map" | "ndjson" | "jsonl" => Some("application/json; charset=utf-8"),
+        "webmanifest" => Some("application/manifest+json; charset=utf-8"),
+        "atom" => Some("application/atom+xml; charset=utf-8"),
+        "rss" => Some("application/rss+xml; charset=utf-8"),
+        "xml" => Some("application/xml; charset=utf-8"),
+        "yaml" | "yml" => Some("application/yaml; charset=utf-8"),
+        "toml" => Some("application/toml; charset=utf-8"),
+        "graphql" | "gql" => Some("application/graphql; charset=utf-8"),
+        "sql" => Some("application/sql; charset=utf-8"),
+        _ => None,
+    }
+}
 
-        // Plain text
-        Some("css") => "text/css; charset=utf-8",
-        Some("csv") => "text/csv; charset=utf-8",
-        Some("md" | "markdown") => "text/markdown; charset=utf-8",
-        Some("txt") => "text/plain; charset=utf-8",
-        Some("log") => "text/plain; charset=utf-8",
+// Return the image MIME type for a normalized extension.
+fn image_mime(extension: &str) -> Option<&'static str> {
+    match extension {
+        "avif" => Some("image/avif"),
+        "bmp" => Some("image/bmp"),
+        "gif" => Some("image/gif"),
+        "ico" => Some("image/x-icon"),
+        "jpeg" | "jpg" | "jfif" | "jif" | "jpe" | "pjpeg" | "pjp" => Some("image/jpeg"),
+        "jxl" => Some("image/jxl"),
+        "png" => Some("image/png"),
+        "svg" => Some("image/svg+xml"),
+        "tif" | "tiff" => Some("image/tiff"),
+        "webp" => Some("image/webp"),
+        "apng" => Some("image/apng"),
+        "heic" | "heif" => Some("image/heic"),
+        "psd" => Some("image/vnd.adobe.photoshop"),
+        "raw" => Some("image/x-raw"),
+        "cr2" => Some("image/x-canon-cr2"),
+        "nef" => Some("image/x-nikon-nef"),
+        "arw" => Some("image/x-sony-arw"),
+        "dng" => Some("image/x-adobe-dng"),
+        "dds" => Some("image/vnd.ms-dds"),
+        "exr" => Some("image/aces"),
+        "ppm" => Some("image/x-portable-pixmap"),
+        "pgm" => Some("image/x-portable-graymap"),
+        "pbm" => Some("image/x-portable-bitmap"),
+        "pnm" => Some("image/x-portable-anymap"),
+        "hdr" => Some("image/vnd.radiance"),
+        _ => None,
+    }
+}
 
-        // JavaScript
-        Some("js" | "mjs" | "cjs") => "application/javascript; charset=utf-8",
+// Return the audio MIME type for a normalized extension.
+fn audio_mime(extension: &str) -> Option<&'static str> {
+    match extension {
+        "aac" | "m4a" => Some("audio/aac"),
+        "ac3" => Some("audio/ac3"),
+        "aiff" | "aif" | "aifc" => Some("audio/aiff"),
+        "alac" | "m4b" | "m4p" => Some("audio/mp4"),
+        "amr" => Some("audio/amr"),
+        "ape" => Some("audio/ape"),
+        "au" => Some("audio/basic"),
+        "caf" => Some("audio/x-caf"),
+        "dts" => Some("audio/vnd.dts"),
+        "dtshd" => Some("audio/vnd.dts.hd"),
+        "eac3" => Some("audio/eac3"),
+        "flac" => Some("audio/flac"),
+        "gsm" => Some("audio/gsm"),
+        "m1a" | "m2a" | "m3a" | "mp1" | "mp2" | "mp3" | "mpa" | "mpga" => Some("audio/mpeg"),
+        "mka" => Some("audio/x-matroska"),
+        "mid" | "midi" | "kar" => Some("audio/midi"),
+        "mod" | "s3m" | "xm" | "it" | "669" => Some("audio/x-mod"),
+        "mpc" => Some("audio/x-musepack"),
+        "oga" | "ogg" | "spx" => Some("audio/ogg"),
+        "opus" => Some("audio/opus"),
+        "ra" | "ram" => Some("audio/x-realaudio"),
+        "tak" => Some("audio/x-tak"),
+        "tta" => Some("audio/x-tta"),
+        "voc" => Some("audio/x-voc"),
+        "wav" | "wave" => Some("audio/wav"),
+        "weba" => Some("audio/webm"),
+        "wma" => Some("audio/x-ms-wma"),
+        "wv" => Some("audio/wavpack"),
+        _ => None,
+    }
+}
 
-        // JSON
-        Some("json" | "map") => "application/json; charset=utf-8",
-        Some("webmanifest") => "application/manifest+json; charset=utf-8",
-        Some("ndjson" | "jsonl") => "application/json; charset=utf-8",
+// Return the video MIME type for a normalized extension.
+fn video_mime(extension: &str) -> Option<&'static str> {
+    match extension {
+        "3gp" | "3gpp" => Some("video/3gpp"),
+        "3g2" | "3gpp2" => Some("video/3gpp2"),
+        "asf" => Some("video/x-ms-asf"),
+        "avi" | "divx" => Some("video/x-msvideo"),
+        "flv" => Some("video/x-flv"),
+        "m2ts" | "mts" | "ts" => Some("video/mp2t"),
+        "m4v" | "mp4" => Some("video/mp4"),
+        "mkv" => Some("video/x-matroska"),
+        "mov" => Some("video/quicktime"),
+        "mpeg" | "mpg" | "mpe" => Some("video/mpeg"),
+        "ogv" => Some("video/ogg"),
+        "vob" => Some("video/dvd"),
+        "webm" => Some("video/webm"),
+        "wmv" => Some("video/x-ms-wmv"),
+        _ => None,
+    }
+}
 
-        // XML
-        Some("atom") => "application/atom+xml; charset=utf-8",
-        Some("rss") => "application/rss+xml; charset=utf-8",
-        Some("xml") => "application/xml; charset=utf-8",
-
-        // Structured data and configuration formats
-        Some("yaml" | "yml") => "application/yaml; charset=utf-8",
-        Some("toml") => "application/toml; charset=utf-8",
-        Some("graphql" | "gql") => "application/graphql; charset=utf-8",
-        Some("sql") => "application/sql; charset=utf-8",
-
-        // Images
-        Some("avif") => "image/avif",
-        Some("bmp") => "image/bmp",
-        Some("gif") => "image/gif",
-        Some("ico") => "image/x-icon",
-        Some("jpeg" | "jpg") => "image/jpeg",
-        Some("jxl") => "image/jxl",
-        Some("png") => "image/png",
-        Some("svg") => "image/svg+xml",
-        Some("tif" | "tiff") => "image/tiff",
-        Some("webp") => "image/webp",
-        Some("apng") => "image/apng",
-        Some("jfif" | "jif" | "jpe") => "image/jpeg",
-        Some("pjpeg" | "pjp") => "image/jpeg",
-        Some("heic" | "heif") => "image/heic",
-        Some("psd") => "image/vnd.adobe.photoshop",
-        Some("raw") => "image/x-raw",
-        Some("cr2") => "image/x-canon-cr2",
-        Some("nef") => "image/x-nikon-nef",
-        Some("arw") => "image/x-sony-arw",
-        Some("dng") => "image/x-adobe-dng",
-        Some("dds") => "image/vnd.ms-dds",
-        Some("exr") => "image/aces",
-        Some("ppm") => "image/x-portable-pixmap",
-        Some("pgm") => "image/x-portable-graymap",
-        Some("pbm") => "image/x-portable-bitmap",
-        Some("pnm") => "image/x-portable-anymap",
-        Some("hdr") => "image/vnd.radiance",
-
-        // Audio
-        Some("aac" | "m4a") => "audio/aac",
-        Some("ac3") => "audio/ac3",
-        Some("aiff" | "aif" | "aifc") => "audio/aiff",
-        Some("alac") => "audio/mp4",
-        Some("amr") => "audio/amr",
-        Some("ape") => "audio/ape",
-        Some("au") => "audio/basic",
-        Some("caf") => "audio/x-caf",
-        Some("dts") => "audio/vnd.dts",
-        Some("dtshd") => "audio/vnd.dts.hd",
-        Some("eac3") => "audio/eac3",
-        Some("flac") => "audio/flac",
-        Some("gsm") => "audio/gsm",
-        Some("m1a" | "m2a" | "m3a" | "mp1" | "mp2" | "mp3" | "mpa" | "mpga") => "audio/mpeg",
-        Some("m4b" | "m4p") => "audio/mp4",
-        Some("mka") => "audio/x-matroska",
-        Some("mid" | "midi" | "kar") => "audio/midi",
-        Some("mod" | "s3m" | "xm" | "it" | "669") => "audio/x-mod",
-        Some("mpc") => "audio/x-musepack",
-        Some("oga" | "ogg" | "spx") => "audio/ogg",
-        Some("opus") => "audio/opus",
-        Some("ra" | "ram") => "audio/x-realaudio",
-        Some("tak") => "audio/x-tak",
-        Some("tta") => "audio/x-tta",
-        Some("voc") => "audio/x-voc",
-        Some("wav" | "wave") => "audio/wav",
-        Some("weba") => "audio/webm",
-        Some("wma") => "audio/x-ms-wma",
-        Some("wv") => "audio/wavpack",
-
-        // Video
-        Some("3gp" | "3gpp") => "video/3gpp",
-        Some("3g2" | "3gpp2") => "video/3gpp2",
-        Some("asf") => "video/x-ms-asf",
-        Some("avi") => "video/x-msvideo",
-        Some("divx") => "video/x-msvideo",
-        Some("flv") => "video/x-flv",
-        Some("m2ts" | "mts") => "video/mp2t",
-        Some("m4v" | "mp4") => "video/mp4",
-        Some("mkv") => "video/x-matroska",
-        Some("mov") => "video/quicktime",
-        Some("mpeg" | "mpg" | "mpe") => "video/mpeg",
-        Some("ogv") => "video/ogg",
-        Some("ts") => "video/mp2t",
-        Some("vob") => "video/dvd",
-        Some("webm") => "video/webm",
-        Some("wmv") => "video/x-ms-wmv",
-
-        // Fonts
-        Some("eot") => "application/vnd.ms-fontobject",
-        Some("otf") => "font/otf",
-        Some("ttf") => "font/ttf",
-        Some("woff") => "font/woff",
-        Some("woff2") => "font/woff2",
-
-        // Documents
-        Some("pdf") => "application/pdf",
-
-        // Compressed archives
-        Some("7z") => "application/x-7z-compressed",
-        Some("gz") => "application/gzip",
-        Some("rar") => "application/vnd.rar",
-        Some("tar") => "application/x-tar",
-        Some("zip") => "application/zip",
-
-        // WebAssembly
-        Some("wasm") => "application/wasm",
-
-        // Unknown file type
-        _ => "application/octet-stream",
+// Return MIME types for fonts, documents, archives, and WebAssembly.
+fn other_mime(extension: &str) -> Option<&'static str> {
+    match extension {
+        "eot" => Some("application/vnd.ms-fontobject"),
+        "otf" => Some("font/otf"),
+        "ttf" => Some("font/ttf"),
+        "woff" => Some("font/woff"),
+        "woff2" => Some("font/woff2"),
+        "pdf" => Some("application/pdf"),
+        "7z" => Some("application/x-7z-compressed"),
+        "gz" => Some("application/gzip"),
+        "rar" => Some("application/vnd.rar"),
+        "tar" => Some("application/x-tar"),
+        "zip" => Some("application/zip"),
+        "wasm" => Some("application/wasm"),
+        _ => None,
     }
 }
 

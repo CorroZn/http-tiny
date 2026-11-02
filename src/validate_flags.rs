@@ -1,12 +1,3 @@
-#![forbid(unsafe_code)]
-#![deny(warnings)]
-#![deny(missing_debug_implementations)]
-#![deny(unused_must_use)]
-#![deny(unreachable_code)]
-#![deny(unused_variables)]
-#![deny(unused_imports)]
-#![deny(rust_2018_idioms)]
-#![deny(unused_attributes)]
 // Copyright (C) 2026 CorroZn <corrozn@proton.me>.
 // SPDX-License-Identifier: GPL-2.0-only
 
@@ -19,10 +10,10 @@ use std::str::FromStr; // Used for parsing strings into IP addresses (e.g. "127.
 // IP validation function
 // Checks if the IP address the user specified can actually be bound to
 // #############################################################################################
-pub fn validate_ip(ip: &str) -> Result<String, String> {
+pub(crate) fn validate_ip(ip: &str) -> Result<String, String> {
     match IpAddr::from_str(ip) {
         Ok(_) => Ok(ip.to_string()),
-        Err(_) => Err(format!("Invalid IP address specified: {}", ip)),
+        Err(_) => Err(format!("Invalid IP address specified: {ip}")),
     }
 }
 
@@ -30,16 +21,16 @@ pub fn validate_ip(ip: &str) -> Result<String, String> {
 // Port validation function
 // Checks if the Port the user specified can actually be listened on
 // #############################################################################################
-pub fn validate_port(port: u16) -> Result<u16, String> {
+pub(crate) fn validate_port(port: u16) -> Result<u16, String> {
     if (1..=65535).contains(&port) {
         Ok(port)
     } else {
-        Err(format!("Invalid port specified: {}", port))
+        Err(format!("Invalid port specified: {port}"))
     }
 }
 
 // Create the default document root beneath the application's working directory.
-pub fn ensure_default_docroot(working_directory: &Path) -> std::io::Result<PathBuf> {
+pub(crate) fn ensure_default_docroot(working_directory: &Path) -> std::io::Result<PathBuf> {
     let docroot = working_directory.join("www");
     fs::create_dir_all(&docroot)?;
     Ok(docroot)
@@ -49,24 +40,24 @@ pub fn ensure_default_docroot(working_directory: &Path) -> std::io::Result<PathB
 // Document root validation function
 // Checks if the document root actually exists and can be read by this HTTP server
 // #############################################################################################
-pub fn validate_docroot(path: &str) -> Result<String, String> {
+pub(crate) fn validate_docroot(path: &str) -> Result<String, String> {
     // Create a filesystem-aware view of the string path (no allocation, no copy)
     let p = Path::new(path);
 
     // Check if the document root exists
     if !p.exists() {
-        return Err(format!("Document root does not exist: {}", path));
+        return Err(format!("Document root does not exist: {path}"));
     }
 
     // Check if the document root is a directory
     if !p.is_dir() {
-        return Err(format!("Document root is not a directory: {}", path));
+        return Err(format!("Document root is not a directory: {path}"));
     }
 
     // Check if the document root can be read
     match fs::read_dir(p) {
         Ok(_) => Ok(path.to_string()),
-        Err(e) => Err(format!("Document root is not readable: {} ({})", path, e)),
+        Err(e) => Err(format!("Document root is not readable: {path} ({e})")),
     }
 }
 
@@ -82,14 +73,14 @@ mod tests {
     struct TestDir(PathBuf);
 
     impl TestDir {
-        fn new() -> Self {
+        fn new() -> std::io::Result<Self> {
             let unique = NEXT_ID.fetch_add(1, Ordering::Relaxed);
             let path = std::env::temp_dir().join(format!(
                 "http-tiny-default-docroot-{}-{unique}",
                 std::process::id()
             ));
-            fs::create_dir(&path).unwrap();
-            Self(path)
+            fs::create_dir(&path)?;
+            Ok(Self(path))
         }
     }
 
@@ -100,12 +91,15 @@ mod tests {
     }
 
     #[test]
-    fn creates_www_under_the_application_working_directory() {
-        let working_directory = TestDir::new();
+    fn creates_www_under_the_application_working_directory()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let working_directory = TestDir::new()?;
 
-        let docroot = ensure_default_docroot(&working_directory.0).unwrap();
+        let docroot = ensure_default_docroot(&working_directory.0)?;
 
         assert_eq!(docroot, working_directory.0.join("www"));
         assert!(working_directory.0.join("www").is_dir());
+
+        Ok(())
     }
 }
