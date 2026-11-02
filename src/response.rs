@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 // Copyright (C) 2026 CorroZn <corrozn@proton.me>.
 // SPDX-License-Identifier: GPL-2.0-only
 
@@ -179,28 +180,27 @@ async fn read_file_with_timeout(
     }
 }
 
+// Choose flags that keep directory traversal pinned and prevent symlink following.
 #[cfg(unix)]
-fn directory_flags() -> i32 {
+fn directory_flags() -> rustix::fs::OFlags {
+    use rustix::fs::OFlags;
+
     #[cfg(target_os = "linux")]
     {
-        libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW
+        OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW
     }
     #[cfg(not(target_os = "linux"))]
     {
-        libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW
     }
 }
 
 // Open the document root component-by-component so a swapped ancestor cannot redirect it.
 #[cfg(unix)]
 fn open_root_directory(path: &Path) -> io::Result<std::fs::File> {
-    use std::os::fd::{AsRawFd, FromRawFd};
-    use std::os::unix::ffi::OsStrExt;
-    use std::os::unix::fs::OpenOptionsExt;
+    use rustix::fs::{Mode, open, openat};
 
-    let mut options = std::fs::OpenOptions::new();
-    options.read(true).custom_flags(directory_flags());
-    let mut directory = options.open("/")?;
+    let mut directory = open("/", directory_flags(), Mode::empty()).map_err(io::Error::from)?;
 
     for component in path.components() {
         let name = match component {
@@ -213,31 +213,17 @@ fn open_root_directory(path: &Path) -> io::Result<std::fs::File> {
                 ));
             }
         };
-        let name = std::ffi::CString::new(name.as_bytes()).map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "document root contains a NUL byte",
-            )
-        })?;
-        // SAFETY: `directory` owns a live directory descriptor and `name` is NUL-terminated.
-        let descriptor =
-            unsafe { libc::openat(directory.as_raw_fd(), name.as_ptr(), directory_flags()) };
-        if descriptor < 0 {
-            return Err(io::Error::last_os_error());
-        }
-        // SAFETY: `openat` returned a new descriptor whose ownership transfers to this `File`.
-        directory = unsafe { std::fs::File::from_raw_fd(descriptor) };
+        directory =
+            openat(&directory, name, directory_flags(), Mode::empty()).map_err(io::Error::from)?;
     }
 
-    Ok(directory)
+    Ok(std::fs::File::from(directory))
 }
 
-// Use directory-relative opens because std::fs cannot prevent path-component swaps.
+// Open each requested path component relative to its pinned parent, rejecting symlinks.
 #[cfg(unix)]
 fn open_confined_file(docroot: &DocumentRoot, path: &Path) -> io::Result<std::fs::File> {
-    use std::ffi::CString;
-    use std::os::fd::{AsRawFd, FromRawFd};
-    use std::os::unix::ffi::OsStrExt;
+    use rustix::fs::{AtFlags, FileType, Mode, OFlags, openat, statat};
 
     // Reopen the configured pathname so atomic document-root replacement is visible.
     let root_directory = open_root_directory(&docroot.canonical_path)?;
@@ -266,35 +252,15 @@ fn open_confined_file(docroot: &DocumentRoot, path: &Path) -> io::Result<std::fs
                 ));
             }
         };
-        let name = CString::new(name.as_bytes()).map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "requested path contains a NUL byte",
-            )
-        })?;
-        let directory_fd = directory.as_ref().map_or_else(
-            || root_directory.as_raw_fd(),
-            |file: &std::fs::File| file.as_raw_fd(),
-        );
         let is_last = index + 1 == component_count;
 
         if is_last {
-            let mut metadata = std::mem::MaybeUninit::<libc::stat>::uninit();
-            // SAFETY: `metadata` points to writable storage and `name` is NUL-terminated.
-            let result = unsafe {
-                libc::fstatat(
-                    directory_fd,
-                    name.as_ptr(),
-                    metadata.as_mut_ptr(),
-                    libc::AT_SYMLINK_NOFOLLOW,
-                )
-            };
-            if result < 0 {
-                return Err(io::Error::last_os_error());
+            let metadata = match directory.as_ref() {
+                Some(parent) => statat(parent, name, AtFlags::SYMLINK_NOFOLLOW),
+                None => statat(&root_directory, name, AtFlags::SYMLINK_NOFOLLOW),
             }
-            // SAFETY: `fstatat` initialized metadata after returning success.
-            let metadata = unsafe { metadata.assume_init() };
-            if metadata.st_mode & libc::S_IFMT != libc::S_IFREG {
+            .map_err(io::Error::from)?;
+            if !FileType::from_raw_mode(metadata.st_mode).is_file() {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
                     "requested path is not a regular file",
@@ -303,19 +269,16 @@ fn open_confined_file(docroot: &DocumentRoot, path: &Path) -> io::Result<std::fs
         }
 
         let flags = if is_last {
-            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK
+            OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK
         } else {
             directory_flags()
         };
-
-        // SAFETY: `directory_fd` is a live directory descriptor and `name` is NUL-terminated.
-        let descriptor = unsafe { libc::openat(directory_fd, name.as_ptr(), flags) };
-        if descriptor < 0 {
-            return Err(io::Error::last_os_error());
+        let opened = match directory.as_ref() {
+            Some(parent) => openat(parent, name, flags, Mode::empty()),
+            None => openat(&root_directory, name, flags, Mode::empty()),
         }
-
-        // SAFETY: `openat` returned a new descriptor whose ownership transfers to this `File`.
-        let opened = unsafe { std::fs::File::from_raw_fd(descriptor) };
+        .map_err(io::Error::from)?;
+        let opened = std::fs::File::from(opened);
         if is_last {
             return Ok(opened);
         }

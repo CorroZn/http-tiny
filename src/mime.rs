@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 // Copyright (C) 2026 CorroZn <corrozn@proton.me>.
 // SPDX-License-Identifier: GPL-2.0-only
 
