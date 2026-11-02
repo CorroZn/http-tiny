@@ -1,7 +1,7 @@
 [package]
 name = "http-tiny"
 authors = ["CorroZn <corrozn@proton.me>"]
-version = "0.2.4"
+version = "0.2.5"
 edition = "2024"
 license = "GPL-2.0-only"
 repository = "https://github.com/CorroZn/http-tiny"
@@ -28,6 +28,42 @@ tokio = { version = "1.52.3", features = [
 
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1.1.5", default-features = false, features = ["std", "fs"] }
+
+[lints.clippy]
+all = "deny"
+pedantic = "warn"
+
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+print_stdout = "warn"
+print_stderr = "warn"
+
+[workspace]
+resolver = "3"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+unused_must_use = "deny"
+unreachable_pub = "deny"
+missing_debug_implementations = "deny"
+rust_2018_idioms = "deny"
+
+[workspace.lints.clippy]
+all = "deny"
+pedantic = "warn"
+nursery = "warn"
+cargo = "warn"
+
+[profile.dev]
+overflow-checks = true
+debug = 2
+
+[profile.test]
+overflow-checks = true
 
 [profile.release]
 opt-level = 3
