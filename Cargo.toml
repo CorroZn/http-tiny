@@ -53,6 +53,8 @@ unimplemented = "deny"
 dbg_macro = "deny"
 print_stdout = "warn"
 print_stderr = "warn"
+mem_forget = "warn"
+lossy_float_literal = "warn"
 
 [profile.release]
 # Keep overflow checks enabled in the deployable server.
