@@ -1,11 +1,11 @@
 [package]
 name = "http-tiny"
 authors = ["CorroZn <corrozn@proton.me>"]
-version = "0.3.0"
+version = "0.3.1"
 edition = "2024"
 license = "GPL-2.0-only"
 repository = "https://github.com/CorroZn/http-tiny"
-description = "A tiny HTTP server intented for use in constrained systems."
+description = "A tiny HTTP server intended for use in constrained systems."
 
 [dependencies]
 clap = { version = "4", default-features = false, features = [
