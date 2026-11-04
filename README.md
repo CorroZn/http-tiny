@@ -217,39 +217,82 @@ target/armv7-unknown-linux-musleabihf/release/http-tiny
 
 ---
 
+markdown
+
+````markdown
 ## Usage
 
-
-Run the server:
-
+Start the server with:
 
 ```bash
 ./http-tiny -d /srv/www -i 127.0.0.1 -p 1234
+````
+
+### Options
+
+| Option | Description | Default |
+| --- | --- | --- |
+| `-d` | Website folder (document root). Created automatically if missing. | `www` (current directory) |
+| `-i` | IP address the server listens on. | `127.0.0.1` |
+| `-p` | Port the server listens on. | `8080` |
+| `-h`, `--help` | Display available options. |  |
+| `-V`, `--version` | Display the server version. |  |
+
+### Environment variables
+
+Settings can also be provided through environment variables:
+
+| Variable | Description |
+| --- | --- |
+| `DOC_ROOT` | Website folder |
+| `LISTEN_ADDR` | Listening IP address |
+| `LISTEN_PORT` | Listening port |
+
+Command-line options take priority over environment variables. If neither is provided, the default is used. Each setting is handled independently, so both methods can be combined.
+
+Example – Set all values using environment variables:
+
+bash
+
+```bash
+DOC_ROOT=/srv/www LISTEN_ADDR=127.0.0.1 LISTEN_PORT=1234 ./http-tiny
 ```
 
+Example – Override only the website folder:
 
--d = Document root (Default: `www` in the current working directory; created automatically on startup if missing)
+bash
 
+```bash
+DOC_ROOT=/srv/env-www LISTEN_ADDR=0.0.0.0 LISTEN_PORT=8081 \
+./http-tiny -d /srv/cli-www
+```
 
--i = IP address to bind to (Default: 127.0.0.1)
+The server uses `/srv/cli-www` as its website folder and takes the IP address and port from the environment variables.
 
-By default, the server listens only on the local machine. To listen on all network interfaces, use `-i 0.0.0.0`:
+Invalid environment values are reported at startup unless overridden by the corresponding command-line option. For example, `LISTEN_PORT` must be an integer between `1` and `65535`.
+
+### Network access
+
+By default, the server only accepts connections from the local computer (`127.0.0.1`). To allow connections through all network interfaces, use either:
+
+bash
 
 ```bash
 http-tiny -i 0.0.0.0
 ```
 
+Or:
 
--p = TCP port to listen on (Default: 8080)
+bash
 
+```bash
+LISTEN_ADDR=0.0.0.0 http-tiny
+```
 
--h or --help = Print help
+```
+```
 
-
--V or --version = Print version
-
-
-Running without any options specified will make http-tiny run with default values.
+Running without any options or corresponding environment variables will make http-tiny run with default values.
 
 The server handles up to 64 active clients. Request headers are limited to 8 KiB, with a 5-second idle timeout and a 30-second total deadline. File metadata reads and individual response writes are limited to 30 seconds; each complete response has a 5-minute deadline.
 

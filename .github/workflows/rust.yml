@@ -1,3 +1,4 @@
+
 name: Rust CI
 
 on:
@@ -28,7 +29,6 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
@@ -46,7 +46,6 @@ jobs:
       - name: Lint
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
-
   check:
     name: Cargo Check
     runs-on: ubuntu-latest
@@ -61,7 +60,6 @@ jobs:
 
       - name: Check project
         run: cargo check --locked --all-targets --all-features
-
 
   test:
     name: Tests
@@ -78,6 +76,20 @@ jobs:
       - name: Run tests
         run: cargo test --locked --all-features --verbose
 
+  release:
+    name: Release Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build optimized release
+        run: cargo build --locked --release --all-features
 
   docs:
     name: Docs

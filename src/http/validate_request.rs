@@ -1,0 +1,201 @@
+// Copyright (C) 2026 CorroZn <corrozn@proton.me>.
+// SPDX-License-Identifier: GPL-2.0-only
+
+use std::borrow::Cow;
+use std::path::{Component, Path, PathBuf}; // Used for working with filesystem paths and their individual components.
+
+// A simple representation of the first line of an HTTP request.
+// < METHOD > < PATH > < HTTP/Version >
+// Example: "GET /index.html HTTP/1.1"
+pub(crate) struct HttpRequest<'a> {
+    pub(crate) method: &'a str,
+    pub(crate) url: &'a str,
+    pub(crate) version: &'a str,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PathError {
+    BadRequest,
+    NotFound,
+}
+
+// #############################################################################################
+// HTTP request validation function.
+// Checks if the HTTP request is valid and safely converts the URL into a filesystem path.
+// Returns the resolved path if valid, otherwise a bounded request error.
+// `canonical_root` is canonicalized once by the listener before requests.
+// #############################################################################################
+pub(crate) fn validate_and_resolve(
+    req: &HttpRequest<'_>,
+    canonical_root: &Path,
+) -> Result<PathBuf, PathError> {
+    // Only allow GET requests.
+    if req.method != "GET" {
+        return Err(PathError::NotFound);
+    }
+
+    // Only support HTTP/1.1.
+    if req.version != "HTTP/1.1" {
+        return Err(PathError::NotFound);
+    }
+
+    // Strip the query string and fragment before decoding the path.
+    let url_bytes = req.url.as_bytes();
+    let path_end = url_bytes
+        .iter()
+        .position(|byte| matches!(byte, b'?' | b'#'))
+        .unwrap_or(url_bytes.len());
+    let raw_path = &req.url[..path_end];
+    let raw_path_bytes = raw_path.as_bytes();
+    let mut requires_normalization = false;
+    let mut previous_was_slash = false;
+    for &byte in raw_path_bytes {
+        if byte == 0 {
+            return Err(PathError::BadRequest);
+        }
+        if byte == b'%' || byte == b'\\' || (byte == b'/' && previous_was_slash) {
+            requires_normalization = true;
+        }
+        previous_was_slash = byte == b'/';
+    }
+
+    // Keep ordinary paths borrowed; only decoded or non-canonical paths need a copy.
+    let url = if requires_normalization {
+        let mut decoded = percent_decode(raw_path_bytes).ok_or(PathError::BadRequest)?;
+        normalize_path(&mut decoded);
+        Cow::Owned(String::from_utf8(decoded).map_err(|_| PathError::BadRequest)?)
+    } else {
+        Cow::Borrowed(raw_path)
+    };
+    let url = url.as_ref();
+
+    // URL must start with a slash
+    if !url.starts_with('/') {
+        return Err(PathError::BadRequest);
+    }
+
+    // Convert the normalized URL into a safe path under the document root.
+    let mut root = canonical_root.to_path_buf();
+    for component in Path::new(url.trim_start_matches('/')).components() {
+        match component {
+            Component::Normal(name) => {
+                // Block hidden files and directories like .env or .git
+                if name.to_string_lossy().starts_with('.') {
+                    return Err(PathError::NotFound);
+                }
+
+                root.push(name);
+            }
+
+            Component::CurDir => {
+                // Ignore "." (current directory)
+            }
+
+            // Block traversal attacks
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err(PathError::NotFound);
+            }
+        }
+    }
+
+    // Serve index.html for explicit and implicit directory requests.
+    if url.ends_with('/') || root.is_dir() {
+        root.push("index.html");
+    }
+
+    let canonical = root.canonicalize().map_err(|_| PathError::NotFound)?;
+
+    // Ensure the final path is still inside docroot (security check)
+    let relative = canonical
+        .strip_prefix(canonical_root)
+        .map_err(|_| PathError::NotFound)?;
+
+    // A symlink can point into a hidden directory, so check the resolved path too.
+    if relative.components().any(|component| match component {
+        Component::Normal(name) => name.to_string_lossy().starts_with('.'),
+        _ => false,
+    }) {
+        return Err(PathError::NotFound);
+    }
+
+    // Return the safe resolved filesystem path
+    Ok(canonical)
+}
+
+// #############################################################################################
+// Convert a single hexadecimal digit into its numeric value.
+// #############################################################################################
+const fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+// #############################################################################################
+// Decode percent-encoded bytes in a URL path.
+// Returns None if the input contains malformed escapes or an embedded NUL.
+// #############################################################################################
+fn percent_decode(input: &[u8]) -> Option<Vec<u8>> {
+    let mut output = Vec::with_capacity(input.len());
+    let mut i = 0;
+
+    while i < input.len() {
+        if input[i] != b'%' {
+            if input[i] == 0 {
+                return None;
+            }
+            output.push(input[i]);
+            i += 1;
+            continue;
+        }
+
+        // '%' must be followed by exactly two hexadecimal digits.
+        if i + 2 >= input.len() {
+            return None;
+        }
+
+        let high = hex_value(input[i + 1])?;
+        let low = hex_value(input[i + 2])?;
+
+        let decoded = (high << 4) | low;
+
+        // Reject embedded NUL bytes.
+        if decoded == 0 {
+            return None;
+        }
+
+        output.push(decoded);
+        i += 3;
+    }
+
+    Some(output)
+}
+
+// #############################################################################################
+// Normalize URL separators and collapse repeated slashes in place.
+// #############################################################################################
+fn normalize_path(path: &mut Vec<u8>) {
+    let mut write = 0;
+    let mut previous_was_slash = false;
+
+    for read in 0..path.len() {
+        let byte = if path[read] == b'\\' {
+            b'/'
+        } else {
+            path[read]
+        };
+
+        if byte == b'/' && previous_was_slash {
+            continue;
+        }
+
+        path[write] = byte;
+        write += 1;
+        previous_was_slash = byte == b'/';
+    }
+
+    path.truncate(write);
+}
