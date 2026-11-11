@@ -1,0 +1,7 @@
+[licenses]
+# Keep dependency licenses permissive; allow the project's declared GPL license only for this package.
+allow = ["Apache-2.0", "MIT", "Unicode-3.0"]
+
+[[licenses.exceptions]]
+name = "http-tiny"
+allow = ["GPL-2.0-only"]
