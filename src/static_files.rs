@@ -1,7 +1,7 @@
 // Copyright (C) 2026 CorroZn <corrozn@proton.me>.
 // SPDX-License-Identifier: GPL-2.0-only
 
-use std::io::{self, Write};
+use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -10,10 +10,7 @@ static FILE_OPEN_FAILURES: AtomicUsize = AtomicUsize::new(0);
 pub(crate) fn report_open_failure(kind: io::ErrorKind) {
     let failures = FILE_OPEN_FAILURES.fetch_add(1, Ordering::Relaxed);
     if failures.trailing_zeros() >= 10 {
-        let _ = writeln!(
-            io::stderr().lock(),
-            "http-tiny: file open failed ({kind:?})"
-        );
+        crate::logging::log(format!("http-tiny: file open failed ({kind:?})\n"));
     }
 }
 

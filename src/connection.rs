@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
 use std::io;
-use std::io::Write;
 use std::sync::Arc; // Handle shared ownership.
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -41,10 +40,7 @@ async fn finish_connection(stream: &mut TcpStream) {
 fn report_failure(category: &str, kind: io::ErrorKind) {
     let failures = CLIENT_FAILURES.fetch_add(1, Ordering::Relaxed);
     if failures.trailing_zeros() >= 10 {
-        let _ = writeln!(
-            io::stderr().lock(),
-            "http-tiny: {category} failed ({kind:?})"
-        );
+        crate::logging::log(format!("http-tiny: {category} failed ({kind:?})\n"));
     }
 }
 

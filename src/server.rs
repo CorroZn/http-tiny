@@ -101,11 +101,10 @@ pub(crate) async fn tcp_listen(
                     // multiple of 1024: log the first transient error, then one
                     // per 1024.
                     if failures.trailing_zeros() >= 10 {
-                        let _ = writeln!(
-                            io::stderr().lock(),
-                            "http-tiny: transient accept error ({:?})",
+                        crate::logging::log(format!(
+                            "http-tiny: transient accept error ({:?})\n",
                             error.kind()
-                        );
+                        ));
                     }
                     sleep(retry_delay).await;
                     retry_delay = (retry_delay * 2).min(ACCEPT_RETRY_MAX);

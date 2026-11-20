@@ -20,6 +20,7 @@
 mod cli;
 mod connection;
 mod http;
+mod logging;
 mod server;
 mod static_files;
 
@@ -32,6 +33,7 @@ use tokio::signal::unix::{SignalKind, signal};
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> std::io::Result<()> {
     let (docroot, ip, port) = cli::flags_handler();
+    logging::spawn();
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
     tokio::select! {

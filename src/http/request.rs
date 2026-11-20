@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
 use std::io;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::io::AsyncReadExt; // Enable Tokio reading methods on I/O types like File and TcpStream
@@ -21,10 +20,7 @@ static REQUEST_READ_FAILURES: AtomicUsize = AtomicUsize::new(0);
 fn report_read_failure(kind: io::ErrorKind) {
     let failures = REQUEST_READ_FAILURES.fetch_add(1, Ordering::Relaxed);
     if failures.trailing_zeros() >= 10 {
-        let _ = writeln!(
-            io::stderr().lock(),
-            "http-tiny: request read failed ({kind:?})"
-        );
+        crate::logging::log(format!("http-tiny: request read failed ({kind:?})\n"));
     }
 }
 
