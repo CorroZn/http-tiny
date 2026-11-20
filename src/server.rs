@@ -3,10 +3,11 @@
 
 use std::io;
 use std::io::Write;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc; // Handle shared ownership.
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
-use tokio::net::{TcpListener, TcpStream}; // TCP listener and stream for client connections.
+use tokio::net::{TcpListener, TcpSocket, TcpStream}; // TCP listener and stream for client connections.
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, watch}; // Limit the number of active clients.
 use tokio::task::JoinSet;
 use tokio::time::sleep;
@@ -22,6 +23,18 @@ static ACCEPT_FAILURES: AtomicUsize = AtomicUsize::new(0);
 
 /// Upper bound for waiting on in-flight responses during shutdown.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
+
+/// Kernel accept-queue depth requested for the listening socket.
+///
+/// `TcpListener::bind` resolves to the standard library's backlog of 128, which
+/// overflows as soon as more clients are waiting than `MAX_CLIENTS` admits,
+/// so the backlog is raised explicitly. `TcpSocket` also drops the
+/// `SO_REUSEADDR` option that `TcpListener::bind` used to set, so the socket
+/// restores it before binding.
+///
+/// The kernel clamps the value to `net.core.somaxconn`, so the effective queue
+/// depth is `min(LISTEN_BACKLOG, somaxconn)`.
+const LISTEN_BACKLOG: u32 = 16384;
 
 // #############################################################################################
 // TCP listener function.
@@ -39,7 +52,23 @@ pub(crate) async fn tcp_listen(
     let docroot = Arc::new(DocumentRoot::open(docroot)?);
 
     // Start listening for connections on the given IP address and port.
-    let listener = TcpListener::bind((ip, port)).await?;
+    let ip = ip
+        .parse::<IpAddr>()
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid IP address"))?;
+    let listener = match ip {
+        IpAddr::V4(_) => {
+            let socket = TcpSocket::new_v4()?;
+            socket.set_reuseaddr(true)?;
+            socket.bind(SocketAddr::new(ip, port))?;
+            socket.listen(LISTEN_BACKLOG)?
+        }
+        IpAddr::V6(_) => {
+            let socket = TcpSocket::new_v6()?;
+            socket.set_reuseaddr(true)?;
+            socket.bind(SocketAddr::new(ip, port))?;
+            socket.listen(LISTEN_BACKLOG)?
+        }
+    };
 
     // Report the bound address only once the server is actually listening.
     let _ = writeln!(
@@ -94,6 +123,9 @@ pub(crate) async fn tcp_listen(
             let _permit = permit;
             http_handle_client(stream, docroot).await;
         });
+        // Reap finished connections: JoinSet keeps completed tasks until they are
+        // joined, so leaving them unjoined grows memory without bound.
+        while connections.try_join_next().is_some() {}
     }
 
     // Stop accepting, then give in-flight responses a bounded window to finish.

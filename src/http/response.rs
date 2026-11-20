@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
@@ -18,6 +18,42 @@ use crate::static_files::{DocumentRoot, report_open_failure};
 pub(crate) const RESPONSE_TIMEOUT: Duration = Duration::from_secs(300);
 const RESPONSE_READ_TIMEOUT: Duration = Duration::from_secs(30);
 const RESPONSE_BUFFER_SIZE: usize = 64 * 1024;
+
+/// Files no larger than this are read in full inside the blocking task that
+/// opens them. A small response then costs one blocking round trip instead of
+/// three (open, metadata, read), which is where most of the per-request kernel
+/// time goes.
+#[cfg(unix)]
+const INLINE_BODY_LIMIT: u64 = 256 * 1024;
+
+/// A response body that is either already in memory or streamed from disk.
+#[derive(Debug)]
+enum ResponseBody {
+    Inline(Vec<u8>),
+    Stream(File),
+}
+
+/// Open the requested file, read small bodies in full, and return the byte
+/// count to advertise plus the body to send.
+#[cfg(unix)]
+fn open_for_response(docroot: &DocumentRoot, path: &Path) -> io::Result<(u64, ResponseBody)> {
+    let mut file = open_confined_file(docroot, path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "requested path is not a regular file",
+        ));
+    }
+    let file_size = metadata.len();
+    if file_size <= INLINE_BODY_LIMIT {
+        let mut body = Vec::new();
+        std::io::Read::read_to_end(&mut file, &mut body)?;
+        Ok((body.len() as u64, ResponseBody::Inline(body)))
+    } else {
+        Ok((file_size, ResponseBody::Stream(File::from_std(file))))
+    }
+}
 // #############################################################################################
 // HTTP response function
 // Sends an HTTP response containing the requested file or a 404 response.
@@ -57,25 +93,24 @@ async fn http_response_inner(
     // Determine the MIME type from the filename extension.
     let mime = http_mime(&path);
 
-    // Open every path component without following links that changed after validation.
     #[cfg(unix)]
     let open_result = {
         let docroot = Arc::clone(&docroot);
-        match tokio::task::spawn_blocking(move || open_confined_file(&docroot, &path)).await {
-            Ok(Ok(file)) => Ok(File::from_std(file)),
+        match tokio::task::spawn_blocking(move || open_for_response(&docroot, &path)).await {
+            Ok(Ok(result)) => Ok(result),
             Ok(Err(error)) => Err(error),
             Err(error) => Err(io::Error::other(error)),
         }
     };
 
     #[cfg(not(unix))]
-    let open_result: io::Result<File> = Err(io::Error::new(
+    let open_result: io::Result<(u64, ResponseBody)> = Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "document-root confinement is not supported on this platform",
     ));
 
-    let mut file = match open_result {
-        Ok(file) => file,
+    let (file_size, body) = match open_result {
+        Ok(result) => result,
 
         // The requested file doesn't exist.
         Err(error) => {
@@ -85,45 +120,40 @@ async fn http_response_inner(
         }
     };
 
-    let metadata_deadline = deadline.min(Instant::now() + RESPONSE_READ_TIMEOUT);
-    let metadata = match timeout_at(metadata_deadline, file.metadata()).await {
-        Ok(result) => result?,
-        Err(_) => {
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "response file metadata timed out",
-            ));
-        }
-    };
-
-    // The requested file is not a file.
-    if !metadata.is_file() {
-        status_not_found(stream, deadline).await?;
-        return Ok(());
-    }
-
-    // Determine the file size for the Content-Length header.
-    let file_size = metadata.len();
-
     // Send the HTTP 200 OK response headers.
     status_ok(stream, mime, file_size, deadline).await?;
 
-    // Allocate only what this response can use, up to the throughput-oriented cap.
-    let buffer_size =
-        usize::try_from(file_size.min(RESPONSE_BUFFER_SIZE as u64)).unwrap_or(RESPONSE_BUFFER_SIZE);
-    let mut buffer = vec![0u8; buffer_size];
+    match body {
+        ResponseBody::Inline(body) => {
+            write_all_with_timeout(stream, &body, deadline).await?;
+        }
+        ResponseBody::Stream(mut file) => {
+            stream_body(stream, &mut file, file_size, deadline).await?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Stream a body too large to buffer, in `RESPONSE_BUFFER_SIZE` chunks.
+///
+/// A file truncated after the metadata read ends the body early, so the client
+/// receives fewer bytes than Content-Length advertises; the size is not
+/// re-checked because that would require buffering the whole file.
+async fn stream_body(
+    stream: &mut TcpStream,
+    file: &mut File,
+    file_size: u64,
+    deadline: Instant,
+) -> io::Result<()> {
+    let mut buffer = vec![0u8; RESPONSE_BUFFER_SIZE];
     let mut bytes_remaining = file_size;
 
-    // Read bytes from file. A file truncated after the metadata read ends the
-    // body early, so the client receives fewer bytes than Content-Length
-    // advertises; the size is not re-checked because that would require
-    // buffering the whole file.
     while bytes_remaining > 0 {
         let read_size = usize::try_from(bytes_remaining)
             .unwrap_or(buffer.len())
             .min(buffer.len());
-        let bytes_read =
-            read_file_with_timeout(&mut file, &mut buffer[..read_size], deadline).await?;
+        let bytes_read = read_file_with_timeout(file, &mut buffer[..read_size], deadline).await?;
 
         // End of file reached.
         if bytes_read == 0 {
